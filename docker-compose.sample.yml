@@ -1,0 +1,30 @@
+# hs-dashboard — docker-compose.sample.yml
+# Copy to docker-compose.yml and adjust for your setup.
+# github.com/mmBesar/hs-dashboard
+
+services:
+
+  hs-dashboard:
+    image: ghcr.io/mmbesar/hs-dashboard:latest
+    container_name: hs-dashboard
+    networks:
+      - your_network   # replace with your network name
+    volumes:
+      # Config files — copy samples and edit
+      - ${CONTAINER_DIR}/hs-dashboard/config.json:/config/config.json:ro
+      - ${CONTAINER_DIR}/hs-dashboard/services.json:/config/services.json:ro
+      # Host metrics — read-only access to /proc and /sys
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    environment:
+      PORT: "8080"              # listening port
+      STATS_INTERVAL: "5"       # seconds between stat reads
+      STATUS_INTERVAL: "30"     # seconds between service checks
+      # HOST_PROC: /host/proc   # path to host /proc (default: /host/proc)
+      # HOST_SYS: /host/sys     # path to host /sys  (default: /host/sys)
+      # CONFIG_DIR: /config     # path to config dir  (default: /config)
+    restart: always
+
+networks:
+  your_network:
+    external: true

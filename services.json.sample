@@ -1,0 +1,56 @@
+{
+  "_comment": "hs-dashboard services — copy to services.json and edit",
+  "_comment_icons": "Available icons: dns, proxy, vault, rss, cal, server, git, home, file, cloud, video, audio, image, database, terminal, download, mail, monitor, lock, router, nas, printer, camera, code, book, chart, search, settings, share, shield, tv, wifi, disk, gpu",
+  "_comment_accent": "Catppuccin Macchiato colors: mauve:#c6a0f6 green:#a6da95 teal:#8bd5ca sky:#91d7e3 peach:#f5a97f yellow:#eed49f pink:#f5bde6 red:#ed8796 lavender:#b7bdf8 blue:#8aadf4",
+  "_comment_disabled": "Set disabled:true for planned services — shown greyed out",
+
+  "servers": [
+    {
+      "name": "hs2",
+      "label": "This server",
+      "ip": "192.168.1.2",
+      "services": [
+        {
+          "name": "Pi-hole",
+          "desc": "Network-wide ad blocking & DNS",
+          "url": "https://pihole.hs2.example.com/admin",
+          "display": "pihole.hs2.example.com",
+          "accent": "#a6da95",
+          "icon": "dns"
+        },
+        {
+          "name": "My Service",
+          "desc": "Description of what it does",
+          "url": "https://service.hs2.example.com",
+          "display": "service.hs2.example.com",
+          "accent": "#c6a0f6",
+          "icon": "server"
+        },
+        {
+          "name": "Coming Soon",
+          "desc": "Planned service",
+          "url": "https://future.hs2.example.com",
+          "display": "future.hs2.example.com",
+          "accent": "#8087a2",
+          "icon": "server",
+          "disabled": true
+        }
+      ]
+    },
+    {
+      "name": "hs",
+      "label": "Other server",
+      "ip": "192.168.1.1",
+      "services": [
+        {
+          "name": "Main Server",
+          "desc": "Main home server",
+          "url": "https://hs.example.com",
+          "display": "hs.example.com",
+          "accent": "#8087a2",
+          "icon": "server"
+        }
+      ]
+    }
+  ]
+}

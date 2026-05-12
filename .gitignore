@@ -1,0 +1,13 @@
+# Personal config — never commit these
+config.json
+services.json
+docker-compose.yml
+.env
+
+# Build artifact
+hs-dashboard
+
+# OS
+.DS_Store
+*.swp
+*.tmp

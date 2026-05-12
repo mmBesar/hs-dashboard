@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="header-left">
+      <div id="logo-area"></div>
+      <div class="logo-sub" id="logo-sub">loading...</div>
+    </div>
+    <div class="header-right">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="date" id="date">--</div>
+      <div class="theme-toggle">
+        <button class="theme-btn" data-theme="light" onclick="setTheme('light')">light</button>
+        <button class="theme-btn" data-theme="dark"  onclick="setTheme('dark')">dark</button>
+        <button class="theme-btn" data-theme="auto"  onclick="setTheme('auto')">auto</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Core stats row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">CPU</div>
+      <div class="stat-value" id="stat-cpu">—</div>
+      <div class="stat-bar"><div class="stat-bar-fill" id="bar-cpu" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">RAM</div>
+      <div class="stat-value" id="stat-ram">—</div>
+      <div class="stat-sub" id="stat-ram-sub"></div>
+      <div class="stat-bar"><div class="stat-bar-fill" id="bar-ram" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Load</div>
+      <div class="stat-value" id="stat-load">—</div>
+      <div class="stat-sub" id="stat-load-sub">1m · 5m · 15m</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Uptime</div>
+      <div class="stat-value" id="stat-uptime" style="font-size:var(--font-lg)">—</div>
+    </div>
+  </div>
+
+  <!-- Dynamic stat rows — populated by app.js from /api/stats -->
+  <div class="stats-row" id="temps-container"></div>
+  <div class="stats-row" id="gpus-container"></div>
+  <div class="stats-row" id="disks-container"></div>
+
+  <!-- Services — populated by app.js from /services.json -->
+  <div id="services-container"></div>
+
+  <!-- System info — populated by app.js from /config.json -->
+  <div class="section-label">system</div>
+  <div class="info-grid">
+    <div class="info-box"><table class="info-table" id="info-network"></table></div>
+    <div class="info-box"><table class="info-table" id="info-hardware"></table></div>
+  </div>
+
+  <footer>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span class="arch-tag" id="arch-tag" style="display:none"></span>
+      <span id="footer-fqdn">—</span>
+    </div>
+    <div id="footer-updated">—</div>
+  </footer>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

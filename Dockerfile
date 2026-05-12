@@ -4,7 +4,7 @@
 # github.com/mmBesar/hs-dashboard
 
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM golang:1.22-trixie AS builder
+FROM golang:1.26-trixie AS builder
 
 ARG TARGETOS=linux
 ARG TARGETARCH

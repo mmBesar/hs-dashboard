@@ -282,6 +282,8 @@ func readThermalZones(zones []ThermalZone) []TempReading {
 	var result []TempReading
 	pattern := filepath.Join(hostSys, "class/thermal/thermal_zone*")
 	zones_paths, _ := filepath.Glob(pattern)
+	// Track unique types to avoid duplicates
+	seen := map[string]bool{}
 	for _, zonePath := range zones_paths {
 		typeData, err := os.ReadFile(filepath.Join(zonePath, "type"))
 		if err != nil {
@@ -289,13 +291,23 @@ func readThermalZones(zones []ThermalZone) []TempReading {
 		}
 		zoneType := strings.TrimSpace(string(typeData))
 
-		// Skip acpitz on x86 — usually unreliable
-		if zoneType == "acpitz" {
+		// Skip noisy/unreliable zone types
+		switch zoneType {
+		case "acpitz", "ACPI Air", "pch_skylake", "pch_cannonlake",
+			"pch_cometlake", "pch_tigerlake", "pch_alderlake",
+			"INT3400 Thermal", "B0D4", "TSR0", "TSR1", "TSR2":
 			continue
 		}
 
+		// Skip duplicate types — show each type once
+		if seen[zoneType] {
+			continue
+		}
+		seen[zoneType] = true
+
 		temp := readTempFile(filepath.Join(zonePath, "temp"))
-		if temp == 0 {
+		// Skip zones reporting 0 or implausible values
+		if temp <= 0 || temp > 120 {
 			continue
 		}
 
@@ -575,6 +587,203 @@ func detectArch() string {
 	return ""
 }
 
+
+// ── Hardware auto-detection ───────────────────────────────────────────────────
+
+func detectCPU() string {
+	data, err := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
+	if err != nil {
+		return ""
+	}
+	var modelName, hardware string
+	cores := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "model name") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				modelName = strings.TrimSpace(parts[1])
+			}
+		}
+		if strings.HasPrefix(line, "Hardware") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				hardware = strings.TrimSpace(parts[1])
+			}
+		}
+		if strings.HasPrefix(line, "processor") {
+			cores++
+		}
+	}
+	name := modelName
+	if name == "" {
+		name = hardware
+	}
+	if name == "" {
+		return ""
+	}
+	if cores > 0 {
+		return fmt.Sprintf("%s · %d cores", name, cores)
+	}
+	return name
+}
+
+func detectOS() string {
+	// Read /etc/os-release from host
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	var prettyName string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "PRETTY_NAME=") {
+			prettyName = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+			break
+		}
+	}
+	return prettyName
+}
+
+func detectKernel() string {
+	data, err := os.ReadFile(filepath.Join(hostProc, "version"))
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) >= 3 {
+		return fields[2]
+	}
+	return ""
+}
+
+func detectRAM() string {
+	data, err := os.ReadFile(filepath.Join(hostProc, "meminfo"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, err := strconv.ParseUint(fields[1], 10, 64)
+				if err == nil {
+					gb := float64(kb) / (1024 * 1024)
+					if gb >= 1 {
+						return fmt.Sprintf("%.0f GB", gb)
+					}
+					return fmt.Sprintf("%.1f GB", gb)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func detectBoard() string {
+	// Try DMI (x86)
+	for _, path := range []string{
+		"/sys/class/dmi/id/product_name",
+		"/sys/class/dmi/id/board_name",
+	} {
+		full := filepath.Join(hostSys, strings.TrimPrefix(path, "/sys"))
+		data, err := os.ReadFile(full)
+		if err == nil {
+			name := strings.TrimSpace(string(data))
+			if name != "" && name != "To be filled by O.E.M." && name != "Default string" {
+				return name
+			}
+		}
+	}
+	// Try /proc/device-tree (ARM/RISC-V)
+	data, err := os.ReadFile(filepath.Join(hostProc, "device-tree/model"))
+	if err == nil {
+		name := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", ""))
+		if name != "" {
+			return name
+		}
+	}
+	// Try /proc/cpuinfo Hardware field
+	cpudata, err := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
+	if err == nil {
+		for _, line := range strings.Split(string(cpudata), "\n") {
+			if strings.HasPrefix(line, "Hardware") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					return strings.TrimSpace(parts[1])
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func detectStorage() string {
+	data, err := os.ReadFile(filepath.Join(hostProc, "mounts"))
+	if err != nil {
+		return ""
+	}
+	var totalGB uint64
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		device := fields[0]
+		mount := fields[1]
+		fstype := fields[2]
+		if !strings.HasPrefix(device, "/dev/") {
+			continue
+		}
+		switch fstype {
+		case "overlay", "tmpfs", "devtmpfs", "squashfs", "ramfs":
+			continue
+		}
+		if strings.HasPrefix(mount, "/proc") || strings.HasPrefix(mount, "/sys") ||
+			strings.HasPrefix(mount, "/dev") || strings.HasPrefix(mount, "/run") ||
+			strings.HasPrefix(mount, "/host") {
+			continue
+		}
+		info, err := os.Stat(mount)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if seen[device] {
+			continue
+		}
+		seen[device] = true
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs(mount, &stat); err == nil {
+			totalGB += stat.Blocks * uint64(stat.Bsize) / (1024 * 1024 * 1024)
+		}
+	}
+	if totalGB > 0 {
+		return fmt.Sprintf("%d GB", totalGB)
+	}
+	return ""
+}
+
+// mergeHardwareConfig fills in any empty hardware fields with auto-detected values
+func mergeHardwareConfig(h *HardwareConfig) {
+	if h.Board == "" {
+		h.Board = detectBoard()
+	}
+	if h.CPU == "" {
+		h.CPU = detectCPU()
+	}
+	if h.RAM == "" {
+		h.RAM = detectRAM()
+	}
+	if h.Storage == "" {
+		h.Storage = detectStorage()
+	}
+	if h.OS == "" {
+		h.OS = detectOS()
+	}
+	if h.Kernel == "" {
+		h.Kernel = detectKernel()
+	}
+}
+
 // ── Stats collector ───────────────────────────────────────────────────────────
 
 type StatsCollector struct {
@@ -786,14 +995,25 @@ func main() {
 	var cfg *DashboardConfig
 	cfgData, err := os.ReadFile(filepath.Join(configDir, "config.json"))
 	if err != nil {
-		log.Printf("warning: no config.json found — using defaults")
+		log.Printf("warning: no config.json found — auto-detecting hardware")
+		cfg = &DashboardConfig{}
+		cfg.Server.Name = "server"
+		cfg.Server.FQDN = "localhost"
+		cfg.Display.Theme = "auto"
+		cfg.Display.Scale = 1.0
+		cfg.Display.Timezone = "UTC"
+		cfg.Display.RefreshStatsMs = 5000
+		cfg.Display.RefreshStatusMs = 30000
+		mergeHardwareConfig(&cfg.Hardware)
 	} else {
 		cfg = &DashboardConfig{}
 		if err := json.Unmarshal(cfgData, cfg); err != nil {
-			log.Printf("warning: config.json parse error: %v", err)
-			cfg = nil
+			log.Printf("warning: config.json parse error: %v — using defaults", err)
+			cfg = &DashboardConfig{}
+			mergeHardwareConfig(&cfg.Hardware)
 		} else {
 			log.Printf("config loaded: %s (%s)", cfg.Server.Name, cfg.Server.FQDN)
+			mergeHardwareConfig(&cfg.Hardware)
 		}
 	}
 

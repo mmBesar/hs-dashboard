@@ -762,25 +762,36 @@ func detectStorage() string {
 	return ""
 }
 
-// mergeHardwareConfig fills in any empty hardware fields with auto-detected values
+// mergeHardwareConfig auto-detects all hardware fields.
+// Config values override auto-detected values only if non-empty.
+// JSON null and "" both result in auto-detection.
 func mergeHardwareConfig(h *HardwareConfig) {
-	if h.Board == "" {
-		h.Board = detectBoard()
+	// Always auto-detect first
+	autoBoard   := detectBoard()
+	autoCPU     := detectCPU()
+	autoRAM     := detectRAM()
+	autoStorage := detectStorage()
+	autoOS      := detectOS()
+	autoKernel  := detectKernel()
+
+	// Use auto-detected value unless config provides a non-empty override
+	if strings.TrimSpace(h.Board) == "" {
+		h.Board = autoBoard
 	}
-	if h.CPU == "" {
-		h.CPU = detectCPU()
+	if strings.TrimSpace(h.CPU) == "" {
+		h.CPU = autoCPU
 	}
-	if h.RAM == "" {
-		h.RAM = detectRAM()
+	if strings.TrimSpace(h.RAM) == "" {
+		h.RAM = autoRAM
 	}
-	if h.Storage == "" {
-		h.Storage = detectStorage()
+	if strings.TrimSpace(h.Storage) == "" {
+		h.Storage = autoStorage
 	}
-	if h.OS == "" {
-		h.OS = detectOS()
+	if strings.TrimSpace(h.OS) == "" {
+		h.OS = autoOS
 	}
-	if h.Kernel == "" {
-		h.Kernel = detectKernel()
+	if strings.TrimSpace(h.Kernel) == "" {
+		h.Kernel = autoKernel
 	}
 }
 

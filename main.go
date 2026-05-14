@@ -600,7 +600,7 @@ func detectCPU() string {
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "model name") {
 			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
+			if len(parts) == 2 && modelName == "" {
 				modelName = strings.TrimSpace(parts[1])
 			}
 		}
@@ -628,19 +628,23 @@ func detectCPU() string {
 }
 
 func detectOS() string {
-	// Read /etc/os-release from host
-	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return ""
-	}
-	var prettyName string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "PRETTY_NAME=") {
-			prettyName = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
-			break
+	// Try host os-release via /host/proc/1/root
+	// /host/proc/1/root symlinks to the host root filesystem
+	for _, path := range []string{
+		"/host/proc/1/root/etc/os-release",
+		"/etc/os-release",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "PRETTY_NAME=") {
+				return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+			}
 		}
 	}
-	return prettyName
+	return ""
 }
 
 func detectKernel() string {
@@ -648,6 +652,7 @@ func detectKernel() string {
 	if err != nil {
 		return ""
 	}
+	// Format: "Linux version 6.x.x ..."
 	fields := strings.Fields(string(data))
 	if len(fields) >= 3 {
 		return fields[2]
@@ -679,29 +684,29 @@ func detectRAM() string {
 }
 
 func detectBoard() string {
-	// Try DMI (x86)
-	for _, path := range []string{
-		"/sys/class/dmi/id/product_name",
-		"/sys/class/dmi/id/board_name",
-	} {
-		full := filepath.Join(hostSys, strings.TrimPrefix(path, "/sys"))
-		data, err := os.ReadFile(full)
+	// Try DMI (x86) — hostSys is /host/sys, dmi is under class/dmi/id/
+	for _, name := range []string{"product_name", "board_name"} {
+		path := filepath.Join(hostSys, "class", "dmi", "id", name)
+		data, err := os.ReadFile(path)
 		if err == nil {
-			name := strings.TrimSpace(string(data))
-			if name != "" && name != "To be filled by O.E.M." && name != "Default string" {
-				return name
+			val := strings.TrimSpace(string(data))
+			if val != "" &&
+				val != "To be filled by O.E.M." &&
+				val != "Default string" &&
+				val != "None" {
+				return val
 			}
 		}
 	}
-	// Try /proc/device-tree (ARM/RISC-V)
-	data, err := os.ReadFile(filepath.Join(hostProc, "device-tree/model"))
+	// Try device-tree model (ARM/RISC-V)
+	data, err := os.ReadFile(filepath.Join(hostProc, "device-tree", "model"))
 	if err == nil {
 		name := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", ""))
 		if name != "" {
 			return name
 		}
 	}
-	// Try /proc/cpuinfo Hardware field
+	// Try cpuinfo Hardware field (older ARM)
 	cpudata, err := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
 	if err == nil {
 		for _, line := range strings.Split(string(cpudata), "\n") {

@@ -798,6 +798,8 @@ func mergeHardwareConfig(h *HardwareConfig) {
 	if strings.TrimSpace(h.Kernel) == "" {
 		h.Kernel = autoKernel
 	}
+	log.Printf("auto-detect: board=%q cpu=%q ram=%q os=%q kernel=%q",
+		autoBoard, autoCPU, autoRAM, autoOS, autoKernel)
 }
 
 // ── Stats collector ───────────────────────────────────────────────────────────
@@ -1030,6 +1032,9 @@ func main() {
 		} else {
 			log.Printf("config loaded: %s (%s)", cfg.Server.Name, cfg.Server.FQDN)
 			mergeHardwareConfig(&cfg.Hardware)
+			log.Printf("hardware: board=%q cpu=%q ram=%q os=%q kernel=%q arch=%q",
+				cfg.Hardware.Board, cfg.Hardware.CPU, cfg.Hardware.RAM,
+				cfg.Hardware.OS, cfg.Hardware.Kernel, cfg.Hardware.Arch)
 		}
 	}
 

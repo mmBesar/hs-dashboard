@@ -683,6 +683,27 @@ func detectRAM() string {
 	return ""
 }
 
+func isValidBoardName(name string) bool {
+	if name == "" {
+		return false
+	}
+	invalid := []string{
+		"To be filled by O.E.M.", "Default string", "None",
+		"Not Applicable", "N/A", "System Product Name",
+		"System Version", "Base Board Product Name",
+	}
+	for _, inv := range invalid {
+		if strings.EqualFold(name, inv) {
+			return false
+		}
+	}
+	// Skip names that look like storage device IDs e.g. "001-004-[F4_SSD]"
+	if strings.Contains(name, "[") && strings.Contains(name, "]") {
+		return false
+	}
+	return true
+}
+
 func detectBoard() string {
 	// Try DMI (x86) — hostSys is /host/sys, dmi is under class/dmi/id/
 	for _, name := range []string{"product_name", "board_name"} {
@@ -690,10 +711,7 @@ func detectBoard() string {
 		data, err := os.ReadFile(path)
 		if err == nil {
 			val := strings.TrimSpace(string(data))
-			if val != "" &&
-				val != "To be filled by O.E.M." &&
-				val != "Default string" &&
-				val != "None" {
+			if isValidBoardName(val) {
 				return val
 			}
 		}
@@ -999,6 +1017,39 @@ func jsonHandler(w http.ResponseWriter, data interface{}) {
 	}
 }
 
+// stripCommentKeys removes _comment_* and _ prefixed keys from JSON.
+// Allows documentation keys in config.json without breaking unmarshaling.
+func stripCommentKeys(data []byte) []byte {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return data
+	}
+	result := make(map[string]json.RawMessage)
+	for k, v := range raw {
+		if strings.HasPrefix(k, "_") {
+			continue
+		}
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(v, &nested); err == nil {
+			cleaned := make(map[string]json.RawMessage)
+			for nk, nv := range nested {
+				if !strings.HasPrefix(nk, "_") {
+					cleaned[nk] = nv
+				}
+			}
+			if b, err := json.Marshal(cleaned); err == nil {
+				result[k] = b
+				continue
+			}
+		}
+		result[k] = v
+	}
+	if b, err := json.Marshal(result); err == nil {
+		return b
+	}
+	return data
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -1014,29 +1065,31 @@ func main() {
 	cfgData, err := os.ReadFile(filepath.Join(configDir, "config.json"))
 	if err != nil {
 		log.Printf("warning: no config.json found — auto-detecting hardware")
-		cfg = &DashboardConfig{}
-		cfg.Server.Name = "server"
-		cfg.Server.FQDN = "localhost"
-		cfg.Display.Theme = "auto"
-		cfg.Display.Scale = 1.0
-		cfg.Display.Timezone = "UTC"
-		cfg.Display.RefreshStatsMs = 5000
-		cfg.Display.RefreshStatusMs = 30000
-		mergeHardwareConfig(&cfg.Hardware)
-	} else {
-		cfg = &DashboardConfig{}
-		if err := json.Unmarshal(cfgData, cfg); err != nil {
-			log.Printf("warning: config.json parse error: %v — using defaults", err)
-			cfg = &DashboardConfig{}
-			mergeHardwareConfig(&cfg.Hardware)
+	}
+
+	cfg = &DashboardConfig{}
+	// Set safe defaults
+	cfg.Display.Theme = "auto"
+	cfg.Display.Scale = 1.2
+	cfg.Display.Timezone = "UTC"
+	cfg.Display.RefreshStatsMs = 5000
+	cfg.Display.RefreshStatusMs = 30000
+
+	if err == nil {
+		// Strip _comment_* keys before parsing — they cause field conflicts
+		cleaned := stripCommentKeys(cfgData)
+		if err2 := json.Unmarshal(cleaned, cfg); err2 != nil {
+			log.Printf("warning: config.json parse error: %v", err2)
 		} else {
 			log.Printf("config loaded: %s (%s)", cfg.Server.Name, cfg.Server.FQDN)
-			mergeHardwareConfig(&cfg.Hardware)
-			log.Printf("hardware: board=%q cpu=%q ram=%q os=%q kernel=%q arch=%q",
-				cfg.Hardware.Board, cfg.Hardware.CPU, cfg.Hardware.RAM,
-				cfg.Hardware.OS, cfg.Hardware.Kernel, cfg.Hardware.Arch)
 		}
 	}
+
+	// Always auto-detect hardware — config values override if non-empty
+	mergeHardwareConfig(&cfg.Hardware)
+	log.Printf("hardware: board=%q cpu=%q ram=%q os=%q kernel=%q",
+		cfg.Hardware.Board, cfg.Hardware.CPU, cfg.Hardware.RAM,
+		cfg.Hardware.OS, cfg.Hardware.Kernel)
 
 	// Start collectors
 	stats := NewStatsCollector(cfg)

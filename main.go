@@ -463,6 +463,38 @@ func readIntelGPUUsage(cardPath string) float64 {
 
 // ── Disk ──────────────────────────────────────────────────────────────────────
 
+func isRealDisk(device, mount, fstype string) bool {
+	if !strings.HasPrefix(device, "/dev/") {
+		return false
+	}
+	switch fstype {
+	case "overlay", "tmpfs", "devtmpfs", "squashfs", "ramfs",
+		"sysfs", "proc", "devpts", "cgroup", "cgroup2",
+		"pstore", "bpf", "tracefs", "debugfs", "securityfs",
+		"fusectl", "hugetlbfs", "mqueue", "autofs", "rpc_pipefs":
+		return false
+	}
+	for _, prefix := range []string{"/proc", "/sys", "/dev", "/run", "/host", "/snap"} {
+		if strings.HasPrefix(mount, prefix) {
+			return false
+		}
+	}
+	info, err := os.Stat(mount)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	for _, part := range strings.Split(mount, "/") {
+		if strings.Contains(part, ".") {
+			return false
+		}
+	}
+	return true
+}
+
+func deviceLabel(device string) string {
+	return filepath.Base(device)
+}
+
 func readDisks() []DiskInfo {
 	data, err := os.ReadFile(filepath.Join(hostProc, "mounts"))
 	if err != nil {
@@ -509,8 +541,13 @@ func readDisks() []DiskInfo {
 			continue
 		}
 
+		// Show device name + mount point for clarity
+		label := deviceLabel(device)
+		if mount != "/" {
+			label = deviceLabel(device) + " (" + mount + ")"
+		}
 		disks = append(disks, DiskInfo{
-			Mount:   mount,
+			Mount:   label,
 			Total:   total / (1024 * 1024 * 1024),
 			Used:    used / (1024 * 1024 * 1024),
 			Free:    free / (1024 * 1024 * 1024),
@@ -744,30 +781,15 @@ func detectStorage() string {
 	if err != nil {
 		return ""
 	}
-	var totalGB uint64
 	seen := map[string]bool{}
+	var totalGB uint64
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
 		}
-		device := fields[0]
-		mount := fields[1]
-		fstype := fields[2]
-		if !strings.HasPrefix(device, "/dev/") {
-			continue
-		}
-		switch fstype {
-		case "overlay", "tmpfs", "devtmpfs", "squashfs", "ramfs":
-			continue
-		}
-		if strings.HasPrefix(mount, "/proc") || strings.HasPrefix(mount, "/sys") ||
-			strings.HasPrefix(mount, "/dev") || strings.HasPrefix(mount, "/run") ||
-			strings.HasPrefix(mount, "/host") {
-			continue
-		}
-		info, err := os.Stat(mount)
-		if err != nil || !info.IsDir() {
+		device, mount, fstype := fields[0], fields[1], fields[2]
+		if !isRealDisk(device, mount, fstype) {
 			continue
 		}
 		if seen[device] {
@@ -776,7 +798,10 @@ func detectStorage() string {
 		seen[device] = true
 		var stat syscall.Statfs_t
 		if err := syscall.Statfs(mount, &stat); err == nil {
-			totalGB += stat.Blocks * uint64(stat.Bsize) / (1024 * 1024 * 1024)
+			gb := stat.Blocks * uint64(stat.Bsize) / (1024 * 1024 * 1024)
+			if gb > 0 {
+				totalGB += gb
+			}
 		}
 	}
 	if totalGB > 0 {

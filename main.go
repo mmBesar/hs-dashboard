@@ -1017,36 +1017,39 @@ func jsonHandler(w http.ResponseWriter, data interface{}) {
 	}
 }
 
-// stripCommentKeys removes _comment_* and _ prefixed keys from JSON.
-// Allows documentation keys in config.json without breaking unmarshaling.
+// stripCommentKeys removes _ prefixed keys from top-level JSON object.
 func stripCommentKeys(data []byte) []byte {
+	return stripCommentKeysDeep(data)
+}
+
+// stripCommentKeysDeep recursively removes _ prefixed keys from JSON at all levels.
+func stripCommentKeysDeep(data []byte) []byte {
+	// Try as object
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return data
-	}
-	result := make(map[string]json.RawMessage)
-	for k, v := range raw {
-		if strings.HasPrefix(k, "_") {
-			continue
-		}
-		var nested map[string]json.RawMessage
-		if err := json.Unmarshal(v, &nested); err == nil {
-			cleaned := make(map[string]json.RawMessage)
-			for nk, nv := range nested {
-				if !strings.HasPrefix(nk, "_") {
-					cleaned[nk] = nv
-				}
-			}
-			if b, err := json.Marshal(cleaned); err == nil {
-				result[k] = b
+	if err := json.Unmarshal(data, &raw); err == nil {
+		result := make(map[string]json.RawMessage)
+		for k, v := range raw {
+			if strings.HasPrefix(k, "_") {
 				continue
 			}
+			result[k] = json.RawMessage(stripCommentKeysDeep(v))
 		}
-		result[k] = v
+		if b, err := json.Marshal(result); err == nil {
+			return b
+		}
 	}
-	if b, err := json.Marshal(result); err == nil {
-		return b
+	// Try as array
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err == nil {
+		result := make([]json.RawMessage, len(arr))
+		for i, v := range arr {
+			result[i] = json.RawMessage(stripCommentKeysDeep(v))
+		}
+		if b, err := json.Marshal(result); err == nil {
+			return b
+		}
 	}
+	// Scalar value — return as-is
 	return data
 }
 
@@ -1115,13 +1118,22 @@ func main() {
 		jsonHandler(w, status.Get())
 	})
 
-	// Serve config files from mounted /config directory
+	// Serve merged config — auto-detected values fill in nulls from config file
 	mux.HandleFunc("/config.json", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(configDir, "config.json"))
+		jsonHandler(w, cfg)
 	})
 
+	// Serve services.json — strip _comment_* keys before serving
 	mux.HandleFunc("/services.json", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(configDir, "services.json"))
+		data, err := os.ReadFile(filepath.Join(configDir, "services.json"))
+		if err != nil {
+			http.Error(w, "services.json not found", http.StatusNotFound)
+			return
+		}
+		cleaned := stripCommentKeysDeep(data)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(cleaned)
 	})
 
 	// Static files (embedded)

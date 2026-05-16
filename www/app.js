@@ -157,7 +157,7 @@ function updateStats(data) {
         <div class="stat-card">
           <div class="stat-label">Disk ${d.mount}</div>
           <div class="stat-value">${d.percent}%</div>
-          <div class="stat-sub">${d.used} / ${d.total} GB</div>
+          <div class="stat-sub">${d.used_gb} / ${d.total_gb} GB</div>
           <div class="stat-bar"><div class="stat-bar-fill ${barClass(d.percent)}" style="width:${d.percent}%"></div></div>
         </div>`;
     });

@@ -43,6 +43,7 @@
 
 /* Catppuccin Latte (light) */
 [data-theme="light"] {
+  /* Catppuccin Latte — official hex values */
   --bg:#eff1f5;--bg2:#ffffff;--bg3:#e6e9ef;
   --border:#ccd0da;--border2:#bcc0cc;
   --text:#4c4f69;--muted:#7c7f93;--muted2:#9ca0b0;
@@ -51,8 +52,10 @@
   --err:#d20f39;--err-bg:rgba(210,15,57,.12);
   --warn:#fe640b;--warn-bg:rgba(254,100,11,.12);
   --soon:#7c7f93;--soon-bg:rgba(124,127,147,.12);
+  /* Latte accent colors matching Macchiato counterparts */
   --ctp-green:#40a02b;--ctp-red:#d20f39;--ctp-peach:#fe640b;
   --ctp-sky:#04a5e5;--ctp-mauve:#8839ef;
+  --ctp-text:#4c4f69;--ctp-subtext0:#6c6f85;
 }
 
 html{font-size:16px}
@@ -77,9 +80,9 @@ header{display:flex;align-items:flex-start;justify-content:space-between;margin-
 .theme-btn.active{background:var(--bg2);color:var(--text);box-shadow:var(--shadow)}
 
 /* ── Stats rows ── */
-.stats-row{display:flex;flex-wrap:wrap;gap:var(--gap);margin-bottom:var(--gap)}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(calc(140px*var(--scale)),1fr));gap:var(--gap);margin-bottom:var(--gap)}
 .stats-row:empty{display:none}
-.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--stat-pad) calc(var(--stat-pad)*1.2);box-shadow:var(--shadow);position:relative;overflow:hidden;flex:1;min-width:calc(120px*var(--scale))}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--stat-pad) calc(var(--stat-pad)*1.2);box-shadow:var(--shadow);position:relative;overflow:hidden}
 .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent);opacity:.4}
 .stat-label{font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
 .stat-value{font-family:var(--sans);font-size:var(--font-xl);font-weight:700;line-height:1;color:var(--text)}

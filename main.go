@@ -474,19 +474,27 @@ func isRealDisk(device, mount, fstype string) bool {
 		"fusectl", "hugetlbfs", "mqueue", "autofs", "rpc_pipefs":
 		return false
 	}
+	// Skip system paths
 	for _, prefix := range []string{"/proc", "/sys", "/dev", "/run", "/host", "/snap"} {
 		if strings.HasPrefix(mount, prefix) {
 			return false
 		}
 	}
+	// Only accept root (/) and simple single-level mount points like /data /boot /home
+	// This excludes all container bind mounts like /config/config.json /etc/resolv.conf
+	// A real mount point has at most 2 path components: / or /something
+	parts := strings.Split(strings.Trim(mount, "/"), "/")
+	if len(parts) > 1 {
+		return false
+	}
+	// Must be a directory
 	info, err := os.Stat(mount)
 	if err != nil || !info.IsDir() {
 		return false
 	}
-	for _, part := range strings.Split(mount, "/") {
-		if strings.Contains(part, ".") {
-			return false
-		}
+	// No dots in mount name
+	if strings.Contains(filepath.Base(mount), ".") {
+		return false
 	}
 	return true
 }
@@ -541,10 +549,10 @@ func readDisks() []DiskInfo {
 			continue
 		}
 
-		// Show device name + mount point for clarity
+		// Show device name and mount point cleanly
 		label := deviceLabel(device)
-		if mount != "/" {
-			label = deviceLabel(device) + " (" + mount + ")"
+		if mount == "/" {
+			label = deviceLabel(device) + " (/)"
 		}
 		disks = append(disks, DiskInfo{
 			Mount:   label,
@@ -754,11 +762,17 @@ func detectBoard() string {
 		}
 	}
 	// Try device-tree model (ARM/RISC-V)
-	data, err := os.ReadFile(filepath.Join(hostProc, "device-tree", "model"))
-	if err == nil {
-		name := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", ""))
-		if name != "" {
-			return name
+	for _, dtPath := range []string{
+		filepath.Join(hostProc, "device-tree", "model"),
+		filepath.Join(hostSys, "firmware", "devicetree", "base", "model"),
+	} {
+		data, err := os.ReadFile(dtPath)
+		if err == nil {
+			name := strings.TrimSpace(string(data))
+			name = strings.ReplaceAll(name, "\x00", "")
+			if name != "" {
+				return name
+			}
 		}
 	}
 	// Try cpuinfo Hardware field (older ARM)
@@ -805,6 +819,9 @@ func detectStorage() string {
 		}
 	}
 	if totalGB > 0 {
+		if totalGB >= 1024 {
+			return fmt.Sprintf("%.1f TB", float64(totalGB)/1024)
+		}
 		return fmt.Sprintf("%d GB", totalGB)
 	}
 	return ""

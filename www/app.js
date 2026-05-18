@@ -251,8 +251,8 @@ function renderInfoTables(cfg) {
 
   const netRows = [
     ['hostname', s.fqdn],
-    ['ip', `<span style="color:var(--ctp-sky)">${s.ip}</span>`],
-    s.dns ? ['dns', `<span style="color:var(--ctp-green)">${s.dns}</span>`] : null,
+    ['ip', `<span style="color:var(--accent)">${s.ip}</span>`],
+    s.dns && s.dns.trim() ? ['dns', `<span style="color:var(--ctp-teal)">${s.dns}</span>`] : null,
     ['os', h.os], ['kernel', h.kernel],
   ].filter(Boolean);
 

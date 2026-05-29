@@ -13,3 +13,6 @@ hs-dashboard
 *.tmp
 
 old
+
+# Agent memory
+AGENTS.md

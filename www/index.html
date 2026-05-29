@@ -28,8 +28,8 @@
     </div>
   </header>
 
-  <!-- Core stats row -->
-  <div class="stats-row">
+  <!-- Stats — static cards updated in-place, dynamic cards injected into #stats-dynamic -->
+  <div class="stats-row" id="stats-row">
     <div class="stat-card">
       <div class="stat-label">CPU</div>
       <div class="stat-value" id="stat-cpu">—</div>
@@ -50,12 +50,8 @@
       <div class="stat-label">Uptime</div>
       <div class="stat-value" id="stat-uptime" style="font-size:var(--font-lg)">—</div>
     </div>
+    <div id="stats-dynamic" style="display:contents"></div>
   </div>
-
-  <!-- Dynamic stat rows — populated by app.js from /api/stats -->
-  <div class="stats-row" id="temps-container"></div>
-  <div class="stats-row" id="gpus-container"></div>
-  <div class="stats-row" id="disks-container"></div>
 
   <!-- Services — populated by app.js from /services.json -->
   <div id="services-container"></div>

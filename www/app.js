@@ -92,36 +92,39 @@ function tempColor(c) {
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 let _arch = null;
+let _lastDyn = '';
 
 function updateStats(data) {
   if (!data || !data.timestamp) return;
 
-  // CPU
+  // CPU — in-place, no DOM allocation
   const cpu = Math.round(data.cpu_percent);
   document.getElementById('stat-cpu').textContent = cpu + '%';
   const bc = document.getElementById('bar-cpu');
   bc.style.width = cpu + '%'; bc.className = 'stat-bar-fill ' + barClass(cpu);
 
-  // RAM
+  // RAM — in-place
   const ram = Math.round(data.ram_percent);
   document.getElementById('stat-ram').textContent = ram + '%';
   document.getElementById('stat-ram-sub').textContent = Math.round(data.ram_used_mb) + ' / ' + Math.round(data.ram_total_mb) + ' MB';
   const br = document.getElementById('bar-ram');
   br.style.width = ram + '%'; br.className = 'stat-bar-fill ' + barClass(ram);
 
-  // Load
+  // Load — in-place
   document.getElementById('stat-load').textContent = data.load_1m.toFixed(2);
   document.getElementById('stat-load-sub').textContent = data.load_1m.toFixed(2)+' · '+data.load_5m.toFixed(2)+' · '+data.load_15m.toFixed(2);
 
-  // Uptime
+  // Uptime — in-place
   document.getElementById('stat-uptime').textContent = formatUptime(data.uptime_seconds);
 
-  // Temps — dynamic
-  const tc = document.getElementById('temps-container');
-  if (tc && data.temps && data.temps.length > 0) {
-    tc.innerHTML = '';
+  // Dynamic cards (temps, GPUs, disks) — only rebuild when data changes
+  const dyn = document.getElementById('stats-dynamic');
+  if (!dyn) return;
+
+  let dh = '';
+  if (data.temps && data.temps.length > 0) {
     data.temps.forEach(t => {
-      tc.innerHTML += `
+      dh += `
         <div class="stat-card">
           <div class="stat-label">${t.label}</div>
           <div class="stat-value" style="color:${tempColor(t.value)}">${t.value}°C</div>
@@ -129,15 +132,11 @@ function updateStats(data) {
         </div>`;
     });
   }
-
-  // GPUs — dynamic
-  const gc = document.getElementById('gpus-container');
-  if (gc && data.gpus && data.gpus.length > 0) {
-    gc.innerHTML = '';
+  if (data.gpus && data.gpus.length > 0) {
     data.gpus.forEach(g => {
       const vram = g.vram_total_mb > 0
         ? `<div class="stat-sub">${g.vram_used_mb} / ${g.vram_total_mb} MB VRAM</div>` : '';
-      gc.innerHTML += `
+      dh += `
         <div class="stat-card">
           <div class="stat-label">${g.vendor} GPU ${g.label}</div>
           <div class="stat-value" style="color:${tempColor(g.temp)}">${g.temp > 0 ? g.temp+'°C' : '—'}</div>
@@ -147,20 +146,20 @@ function updateStats(data) {
         </div>`;
     });
   }
-
-  // Disks — dynamic
-  const dc2 = document.getElementById('disks-container');
-  if (dc2 && data.disks && data.disks.length > 0) {
-    dc2.innerHTML = '';
+  if (data.disks && data.disks.length > 0) {
     data.disks.forEach(d => {
-      dc2.innerHTML += `
+      dh += `
         <div class="stat-card">
-          <div class="stat-label">Disk ${d.mount}</div>
+          <div class="stat-label">${d.fstype || 'disk'}</div>
           <div class="stat-value">${d.percent}%</div>
-          <div class="stat-sub">${d.used_gb} / ${d.total_gb} GB</div>
+          <div class="stat-sub">${d.mount} · ${d.used_gb} / ${d.total_gb} GB</div>
           <div class="stat-bar"><div class="stat-bar-fill ${barClass(d.percent)}" style="width:${d.percent}%"></div></div>
         </div>`;
     });
+  }
+  if (dh !== _lastDyn) {
+    dyn.innerHTML = dh;
+    _lastDyn = dh;
   }
 
   // Arch

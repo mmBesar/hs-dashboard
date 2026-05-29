@@ -19,6 +19,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -95,6 +96,7 @@ type TempReading struct {
 
 type DiskInfo struct {
 	Mount   string  `json:"mount"`
+	FSType  string  `json:"fstype"`
 	Total   uint64  `json:"total_gb"`
 	Used    uint64  `json:"used_gb"`
 	Free    uint64  `json:"free_gb"`
@@ -556,6 +558,7 @@ func readDisks() []DiskInfo {
 		}
 		disks = append(disks, DiskInfo{
 			Mount:   label,
+			FSType:  fstype,
 			Total:   total / (1024 * 1024 * 1024),
 			Used:    used / (1024 * 1024 * 1024),
 			Free:    free / (1024 * 1024 * 1024),
@@ -710,19 +713,90 @@ func detectRAM() string {
 	if err != nil {
 		return ""
 	}
+	var sizeGB float64
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "MemTotal:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				kb, err := strconv.ParseUint(fields[1], 10, 64)
 				if err == nil {
-					gb := float64(kb) / (1024 * 1024)
-					if gb >= 1 {
-						return fmt.Sprintf("%.0f GB", gb)
-					}
-					return fmt.Sprintf("%.1f GB", gb)
+					sizeGB = float64(kb) / (1024 * 1024)
 				}
 			}
+			break
+		}
+	}
+	if sizeGB == 0 {
+		return ""
+	}
+	sizeStr := fmt.Sprintf("%.0f GB", sizeGB)
+	if sizeGB < 1 {
+		sizeStr = fmt.Sprintf("%.1f GB", sizeGB)
+	}
+	if ramType := detectRAMType(); ramType != "" {
+		return sizeStr + " " + ramType
+	}
+	return sizeStr
+}
+
+func detectRAMType() string {
+	// Try DMI Type 17 (Memory Device) entries — works on x86 with SMBIOS
+	entries, err := filepath.Glob(filepath.Join(hostSys, "firmware", "dmi", "entries", "17-*", "raw"))
+	if err == nil && len(entries) > 0 {
+		typeMap := map[byte]string{
+			0x11: "DDR", 0x12: "DDR2", 0x13: "DDR2 FB-DIMM",
+			0x17: "DDR3", 0x18: "DDR4", 0x19: "DDR5",
+			0x1A: "LPDDR", 0x1B: "LPDDR2", 0x1C: "LPDDR3",
+			0x1D: "LPDDR4", 0x1E: "LPDDR5",
+		}
+		seen := map[string]bool{}
+		for _, entry := range entries {
+			raw, err := os.ReadFile(entry)
+			if err != nil || len(raw) < 23 {
+				continue
+			}
+			// raw[0] = SMBIOS type (17=0x11), raw[1] = formatted length
+			if raw[0] != 17 || raw[1] < 0x13 {
+				continue
+			}
+			// Memory Type field at offset 0x12 within formatted area
+			// Formatted area starts at byte 4, so absolute offset = 4 + 0x12 = 22
+			memType := raw[22]
+			if name, ok := typeMap[memType]; ok {
+				seen[name] = true
+			}
+		}
+		var types []string
+		for t := range seen {
+			types = append(types, t)
+		}
+		if len(types) > 0 {
+			sort.Strings(types)
+			return strings.Join(types, " + ")
+		}
+	}
+
+	// Fallback: try EDAC dimm_type
+	edacDirs, err := filepath.Glob(filepath.Join(hostSys, "devices", "system", "edac", "mc", "mc*", "dimm*", "dimm_type"))
+	if err == nil && len(edacDirs) > 0 {
+		seen := map[string]bool{}
+		for _, p := range edacDirs {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			name := strings.TrimSpace(string(data))
+			if name != "" {
+				seen[name] = true
+			}
+		}
+		var types []string
+		for t := range seen {
+			types = append(types, t)
+		}
+		if len(types) > 0 {
+			sort.Strings(types)
+			return strings.Join(types, " + ")
 		}
 	}
 	return ""
@@ -796,7 +870,7 @@ func detectStorage() string {
 		return ""
 	}
 	seen := map[string]bool{}
-	var totalGB uint64
+	typeSizes := map[string]uint64{}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
@@ -806,25 +880,82 @@ func detectStorage() string {
 		if !isRealDisk(device, mount, fstype) {
 			continue
 		}
-		if seen[device] {
+		devBase := storageDevBase(device)
+		if devBase == "" || seen[devBase] {
 			continue
 		}
-		seen[device] = true
+		seen[devBase] = true
 		var stat syscall.Statfs_t
 		if err := syscall.Statfs(mount, &stat); err == nil {
 			gb := stat.Blocks * uint64(stat.Bsize) / (1024 * 1024 * 1024)
 			if gb > 0 {
-				totalGB += gb
+				devType := storageDevType(devBase)
+				typeSizes[devType] += gb
 			}
 		}
 	}
-	if totalGB > 0 {
-		if totalGB >= 1024 {
-			return fmt.Sprintf("%.1f TB", float64(totalGB)/1024)
-		}
-		return fmt.Sprintf("%d GB", totalGB)
+	if len(typeSizes) == 0 {
+		return ""
 	}
-	return ""
+	var total uint64
+	var typeNames []string
+	for t, s := range typeSizes {
+		total += s
+		typeNames = append(typeNames, t)
+	}
+	sort.Strings(typeNames)
+	totalStr := fmt.Sprintf("%d GB", total)
+	if total >= 1024 {
+		totalStr = fmt.Sprintf("%.1f TB", float64(total)/1024)
+	}
+	return strings.Join(typeNames, " + ") + " " + totalStr
+}
+
+func storageDevBase(device string) string {
+	base := filepath.Base(device)
+	if strings.HasPrefix(base, "nvme") {
+		if idx := strings.LastIndex(base, "p"); idx > 0 {
+			if _, err := strconv.Atoi(base[idx+1:]); err == nil {
+				return base[:idx]
+			}
+		}
+		return base
+	}
+	if strings.HasPrefix(base, "mmcblk") {
+		if idx := strings.LastIndex(base, "p"); idx > 0 {
+			if _, err := strconv.Atoi(base[idx+1:]); err == nil {
+				return base[:idx]
+			}
+		}
+		return base
+	}
+	// sd*, vd*, xvd* — strip trailing digits
+	return strings.TrimRight(base, "0123456789")
+}
+
+func storageDevType(devBase string) string {
+	if strings.HasPrefix(devBase, "nvme") {
+		return "NVMe"
+	}
+	if strings.HasPrefix(devBase, "mmcblk") {
+		return "eMMC"
+	}
+	if strings.HasPrefix(devBase, "vd") {
+		return "VirtIO"
+	}
+	if strings.HasPrefix(devBase, "xvd") {
+		return "Xen"
+	}
+	// sd* or anything else — check rotational
+	rotPath := filepath.Join(hostSys, "block", devBase, "queue", "rotational")
+	data, err := os.ReadFile(rotPath)
+	if err != nil {
+		return "SSD"
+	}
+	if strings.TrimSpace(string(data)) == "0" {
+		return "SSD"
+	}
+	return "HDD"
 }
 
 // mergeHardwareConfig auto-detects all hardware fields.

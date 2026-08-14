@@ -21,20 +21,14 @@ jobs:
     name: Prepare
     runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.check.outputs.version }}
-      build_date: ${{ steps.check.outputs.build_date }}
-
+      version: ${{ steps.v.outputs.version }}
+      build_date: ${{ steps.v.outputs.build_date }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Read version
-        id: check
+      - uses: actions/checkout@v6
+      - id: v
         run: |
-          VERSION=$(cat UPSTREAM_VERSION 2>/dev/null | tr -d '[:space:]' || echo "unknown")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$(cat UPSTREAM_VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
           echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
-          echo "Building hs-dashboard version: $VERSION"
 
   build:
     name: Build/${{ matrix.arch }}
@@ -43,7 +37,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     strategy:
       fail-fast: false
       matrix:
@@ -57,36 +50,23 @@ jobs:
           - arch: riscv64
             runner: ubuntu-24.04
             goarch: riscv64
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Get short SHA
-        id: sha
+      - uses: actions/checkout@v6
+      - id: sha
         run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Set up QEMU (riscv64 only)
-        if: matrix.arch == 'riscv64'
+      - if: matrix.arch == 'riscv64'
         uses: docker/setup-qemu-action@v4
         with:
           platforms: riscv64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push ${{ matrix.arch }}
-        uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
           platforms: linux/${{ matrix.arch }}
           push: true
           tags: |
@@ -106,32 +86,22 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       packages: write
-
     steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Create and push manifests
-        run: |
+      - uses: docker/setup-buildx-action@v4
+      - run: |
           VERSION=${{ needs.prepare.outputs.version }}
-
           docker buildx imagetools create \
             --tag ${{ env.IMAGE_NAME }}:latest \
             ${{ env.IMAGE_NAME }}:latest-amd64 \
             ${{ env.IMAGE_NAME }}:latest-arm64 \
             ${{ env.IMAGE_NAME }}:latest-riscv64
-
           docker buildx imagetools create \
             --tag ${{ env.IMAGE_NAME }}:${VERSION} \
             ${{ env.IMAGE_NAME }}:${VERSION}-amd64 \
             ${{ env.IMAGE_NAME }}:${VERSION}-arm64 \
             ${{ env.IMAGE_NAME }}:${VERSION}-riscv64
-
-          echo "Manifests created for latest and ${VERSION}"

@@ -1,53 +1,42 @@
 {
-  "_comment": "hs-dashboard config — copy to config.json and edit",
-  "_docs": "https://github.com/mmBesar/hs-dashboard",
+  "_comment": "hs-dashboard — copy to config.json and edit. All hardware fields auto-detect if null.",
 
   "server": {
     "name": "hs2",
-    "_comment_name": "Short name shown in logo. Last character becomes accent color.",
+    "_comment_name": "Short name for logo. Last character gets accent color.",
     "fqdn": "hs2.example.com",
     "ip": "192.168.1.2",
-    "dns": "192.168.1.3",
-    "_comment_dns": "Set to null to hide DNS row",
+    "dns": null,
+    "_comment_dns": "DNS server IP shown in system section. null to hide.",
     "description": "Home server"
   },
 
   "hardware": {
-    "board": "Your Board Name",
-    "cpu": "Your CPU · N cores",
+    "_comment": "All fields auto-detected if null. Set to override.",
+    "board": null,
+    "cpu": null,
     "arch": null,
-    "_comment_arch": "null = auto-detect from /proc/cpuinfo. Or set manually e.g. 'RISC-V rv64gcv'",
-    "ram": "4 GB",
-    "storage": "64 GB NVMe",
-    "os": "Debian Trixie",
-    "kernel": "6.x.x"
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "kernel": null
   },
 
   "logo": {
     "image": null,
-    "_comment_image": "Optional. Filename in www/ e.g. 'logo.png'. null = text logo.",
+    "_comment_image": "Optional image filename in www/. null = text logo.",
     "height": 48
   },
 
   "thermal": {
-    "_comment": "Leave zones empty [] for auto-detection. Or specify zones explicitly.",
-    "_comment_auto": "Auto-detection reads all /sys/class/thermal/thermal_zone* entries.",
-    "_comment_manual": "Manual zones let you label and control which zones appear.",
+    "_comment": "Leave zones empty [] for auto-detection. Specify zones to override labels.",
     "zones": []
   },
 
-  "_comment_thermal_example": {
+  "_comment_thermal_manual": {
     "zones": [
-      {
-        "path": "/sys/class/thermal/thermal_zone0/temp",
-        "label": "CPU",
-        "description": "main cluster"
-      },
-      {
-        "path": "/sys/class/thermal/thermal_zone1/temp",
-        "label": "GPU",
-        "description": "graphics"
-      }
+      {"path": "/sys/class/thermal/thermal_zone0/temp", "label": "CPU", "description": "main cluster"},
+      {"path": "/sys/class/thermal/thermal_zone1/temp", "label": "GPU", "description": "graphics"}
     ]
   },
 
@@ -55,9 +44,9 @@
     "timezone": "UTC",
     "_comment_timezone": "IANA timezone e.g. Europe/London, America/New_York, Africa/Cairo",
     "theme": "auto",
-    "_comment_theme": "auto, light, or dark. auto follows system preference.",
+    "_comment_theme": "auto, light, or dark",
     "scale": 1.2,
-    "_comment_scale": "UI scale. 1.0=normal 1.2=larger 1.4=largest 0.9=smaller",
+    "_comment_scale": "UI scale: 1.0=normal 1.2=larger 1.4=largest",
     "refresh_stats_ms": 5000,
     "refresh_status_ms": 30000
   }

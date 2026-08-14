@@ -1,9 +1,7 @@
 // hs-dashboard — main.go
-// Single binary dashboard server.
-// Reads host metrics from /host/proc and /host/sys (mounted read-only).
-// Serves static files embedded at compile time.
-// Checks service URLs and serves results as JSON.
-//
+// Single binary homelab dashboard.
+// Reads host metrics via /host/proc and /host/sys (read-only mounts).
+// Embeds static files at compile time — no external dependencies.
 // github.com/mmBesar/hs-dashboard
 
 package main
@@ -19,7 +17,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"sort"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,14 +25,37 @@ import (
 	"time"
 )
 
-// ── Embedded static files ─────────────────────────────────────────────────────
-// All files in www/ are embedded into the binary at compile time.
-// No external files needed at runtime.
-
 //go:embed www
 var staticFiles embed.FS
 
-// ── Configuration ─────────────────────────────────────────────────────────────
+// ── Environment ───────────────────────────────────────────────────────────────
+
+var (
+	hostProc       = envOr("HOST_PROC", "/host/proc")
+	hostSys        = envOr("HOST_SYS", "/host/sys")
+	configDir      = envOr("CONFIG_DIR", "/config")
+	listenPort     = envOr("PORT", "8080")
+	statsInterval  = envIntOr("STATS_INTERVAL", 5)
+	statusInterval = envIntOr("STATUS_INTERVAL", 30)
+)
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// ── Config types ──────────────────────────────────────────────────────────────
 
 type ServerConfig struct {
 	Name        string `json:"name"`
@@ -48,7 +68,7 @@ type ServerConfig struct {
 type HardwareConfig struct {
 	Board   string `json:"board"`
 	CPU     string `json:"cpu"`
-	Arch    string `json:"arch"` // null = auto-detect
+	Arch    string `json:"arch"`
 	RAM     string `json:"ram"`
 	Storage string `json:"storage"`
 	OS      string `json:"os"`
@@ -71,11 +91,11 @@ type ThermalConfig struct {
 }
 
 type DisplayConfig struct {
-	Timezone       string  `json:"timezone"`
-	Theme          string  `json:"theme"`
-	Scale          float64 `json:"scale"`
-	RefreshStatsMs int     `json:"refresh_stats_ms"`
-	RefreshStatusMs int    `json:"refresh_status_ms"`
+	Timezone        string  `json:"timezone"`
+	Theme           string  `json:"theme"`
+	Scale           float64 `json:"scale"`
+	RefreshStatsMs  int     `json:"refresh_stats_ms"`
+	RefreshStatusMs int     `json:"refresh_status_ms"`
 }
 
 type DashboardConfig struct {
@@ -94,38 +114,38 @@ type TempReading struct {
 	Value       int    `json:"value"`
 }
 
-type DiskInfo struct {
+type DiskStat struct {
+	Device  string  `json:"device"`
 	Mount   string  `json:"mount"`
-	FSType  string  `json:"fstype"`
-	Total   uint64  `json:"total_gb"`
-	Used    uint64  `json:"used_gb"`
-	Free    uint64  `json:"free_gb"`
+	TotalGB uint64  `json:"total_gb"`
+	UsedGB  uint64  `json:"used_gb"`
+	FreeGB  uint64  `json:"free_gb"`
 	Percent float64 `json:"percent"`
 }
 
 type GPUInfo struct {
-	Label   string  `json:"label"`
-	Vendor  string  `json:"vendor"`
-	Temp    int     `json:"temp"`
-	Usage   float64 `json:"usage_percent"`
-	VRAMUsed  uint64 `json:"vram_used_mb"`
-	VRAMTotal uint64 `json:"vram_total_mb"`
+	Label     string  `json:"label"`
+	Vendor    string  `json:"vendor"`
+	Temp      int     `json:"temp"`
+	Usage     float64 `json:"usage_percent"`
+	VRAMUsed  uint64  `json:"vram_used_mb"`
+	VRAMTotal uint64  `json:"vram_total_mb"`
 }
 
 type StatsResponse struct {
-	CPUPercent  float64       `json:"cpu_percent"`
-	RAMPercent  float64       `json:"ram_percent"`
-	RAMUsedMB   uint64        `json:"ram_used_mb"`
-	RAMTotalMB  uint64        `json:"ram_total_mb"`
-	Temps       []TempReading `json:"temps"`
-	Disks       []DiskInfo    `json:"disks"`
-	GPUs        []GPUInfo     `json:"gpus"`
-	Load1m      float64       `json:"load_1m"`
-	Load5m      float64       `json:"load_5m"`
-	Load15m     float64       `json:"load_15m"`
-	UptimeSeconds int64       `json:"uptime_seconds"`
-	Arch        string        `json:"arch"`
-	Timestamp   int64         `json:"timestamp"`
+	CPUPercent    float64       `json:"cpu_percent"`
+	RAMPercent    float64       `json:"ram_percent"`
+	RAMUsedMB     uint64        `json:"ram_used_mb"`
+	RAMTotalMB    uint64        `json:"ram_total_mb"`
+	Temps         []TempReading `json:"temps"`
+	Disks         []DiskStat    `json:"disks"`
+	GPUs          []GPUInfo     `json:"gpus"`
+	Load1m        float64       `json:"load_1m"`
+	Load5m        float64       `json:"load_5m"`
+	Load15m       float64       `json:"load_15m"`
+	UptimeSeconds int64         `json:"uptime_seconds"`
+	Arch          string        `json:"arch"`
+	Timestamp     int64         `json:"timestamp"`
 }
 
 type StatusResponse struct {
@@ -133,38 +153,9 @@ type StatusResponse struct {
 	Services  map[string]string `json:"services"`
 }
 
-// ── Paths ─────────────────────────────────────────────────────────────────────
-
-var (
-	hostProc   = envOr("HOST_PROC", "/host/proc")
-	hostSys    = envOr("HOST_SYS", "/host/sys")
-	configDir  = envOr("CONFIG_DIR", "/config")
-	listenPort = envOr("PORT", "8080")
-	statsInterval  = envIntOr("STATS_INTERVAL", 5)
-	statusInterval = envIntOr("STATUS_INTERVAL", 30)
-)
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func envIntOr(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
 // ── CPU sampling ──────────────────────────────────────────────────────────────
 
-type cpuSample struct {
-	total, idle uint64
-}
+type cpuSample struct{ total, idle uint64 }
 
 func readCPUSample() (cpuSample, error) {
 	data, err := os.ReadFile(filepath.Join(hostProc, "stat"))
@@ -179,43 +170,42 @@ func readCPUSample() (cpuSample, error) {
 		if len(fields) < 8 {
 			continue
 		}
-		vals := make([]uint64, len(fields)-1)
-		for i, f := range fields[1:] {
-			vals[i], _ = strconv.ParseUint(f, 10, 64)
+		var vals [7]uint64
+		for i := range vals {
+			vals[i], _ = strconv.ParseUint(fields[i+1], 10, 64)
 		}
-		// user, nice, system, idle, iowait, irq, softirq
 		idle := vals[3] + vals[4]
 		total := vals[0] + vals[1] + vals[2] + vals[3] + vals[4] + vals[5] + vals[6]
 		return cpuSample{total: total, idle: idle}, nil
 	}
-	return cpuSample{}, fmt.Errorf("cpu line not found in /proc/stat")
+	return cpuSample{}, fmt.Errorf("cpu line not found")
 }
 
 // ── RAM ───────────────────────────────────────────────────────────────────────
 
-func readRAM() (usedMB, totalMB uint64, percent float64, err error) {
+func readRAM() (usedMB, totalMB uint64, percent float64) {
 	data, err := os.ReadFile(filepath.Join(hostProc, "meminfo"))
 	if err != nil {
 		return
 	}
 	var total, free, buffers, cached, sreclaimable uint64
 	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		f := strings.Fields(line)
+		if len(f) < 2 {
 			continue
 		}
-		val, _ := strconv.ParseUint(fields[1], 10, 64)
-		switch strings.TrimSuffix(fields[0], ":") {
+		v, _ := strconv.ParseUint(f[1], 10, 64)
+		switch strings.TrimSuffix(f[0], ":") {
 		case "MemTotal":
-			total = val
+			total = v
 		case "MemFree":
-			free = val
+			free = v
 		case "Buffers":
-			buffers = val
+			buffers = v
 		case "Cached":
-			cached = val
+			cached = v
 		case "SReclaimable":
-			sreclaimable = val
+			sreclaimable = v
 		}
 	}
 	used := total - free - buffers - cached - sreclaimable
@@ -227,271 +217,224 @@ func readRAM() (usedMB, totalMB uint64, percent float64, err error) {
 	return
 }
 
-// ── Load average ──────────────────────────────────────────────────────────────
+// ── Load + Uptime ─────────────────────────────────────────────────────────────
 
-func readLoadAvg() (load1, load5, load15 float64, err error) {
-	data, err := os.ReadFile(filepath.Join(hostProc, "loadavg"))
-	if err != nil {
-		return
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) >= 3 {
-		load1, _ = strconv.ParseFloat(fields[0], 64)
-		load5, _ = strconv.ParseFloat(fields[1], 64)
-		load15, _ = strconv.ParseFloat(fields[2], 64)
+func readLoadAvg() (l1, l5, l15 float64) {
+	data, _ := os.ReadFile(filepath.Join(hostProc, "loadavg"))
+	f := strings.Fields(string(data))
+	if len(f) >= 3 {
+		l1, _ = strconv.ParseFloat(f[0], 64)
+		l5, _ = strconv.ParseFloat(f[1], 64)
+		l15, _ = strconv.ParseFloat(f[2], 64)
 	}
 	return
 }
 
-// ── Uptime ────────────────────────────────────────────────────────────────────
-
-func readUptime() (int64, error) {
-	data, err := os.ReadFile(filepath.Join(hostProc, "uptime"))
-	if err != nil {
-		return 0, err
+func readUptime() int64 {
+	data, _ := os.ReadFile(filepath.Join(hostProc, "uptime"))
+	f := strings.Fields(string(data))
+	if len(f) > 0 {
+		v, _ := strconv.ParseFloat(f[0], 64)
+		return int64(v)
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return 0, fmt.Errorf("empty uptime")
-	}
-	f, err := strconv.ParseFloat(fields[0], 64)
-	return int64(f), err
+	return 0
 }
 
 // ── Temperatures ──────────────────────────────────────────────────────────────
 
-func readThermalZones(zones []ThermalZone) []TempReading {
-	// If config provides zones — use them
-	if len(zones) > 0 {
-		var result []TempReading
-		for _, z := range zones {
-			// Rewrite path to use hostSys prefix
-			path := z.Path
-			if strings.HasPrefix(path, "/sys/") {
-				path = filepath.Join(hostSys, strings.TrimPrefix(path, "/sys"))
-			}
-			val := readTempFile(path)
-			result = append(result, TempReading{
-				Label:       z.Label,
-				Description: z.Description,
-				Value:       val,
-			})
-		}
-		return result
-	}
-
-	// Auto-discover thermal zones
-	var result []TempReading
-	pattern := filepath.Join(hostSys, "class/thermal/thermal_zone*")
-	zones_paths, _ := filepath.Glob(pattern)
-	// Track unique types to avoid duplicates
-	seen := map[string]bool{}
-	for _, zonePath := range zones_paths {
-		typeData, err := os.ReadFile(filepath.Join(zonePath, "type"))
-		if err != nil {
-			continue
-		}
-		zoneType := strings.TrimSpace(string(typeData))
-
-		// Skip noisy/unreliable zone types
-		switch zoneType {
-		case "acpitz", "ACPI Air", "pch_skylake", "pch_cannonlake",
-			"pch_cometlake", "pch_tigerlake", "pch_alderlake",
-			"INT3400 Thermal", "B0D4", "TSR0", "TSR1", "TSR2":
-			continue
-		}
-
-		// Skip duplicate types — show each type once
-		if seen[zoneType] {
-			continue
-		}
-		seen[zoneType] = true
-
-		temp := readTempFile(filepath.Join(zonePath, "temp"))
-		// Skip zones reporting 0 or implausible values
-		if temp <= 0 || temp > 120 {
-			continue
-		}
-
-		label := formatZoneLabel(zoneType)
-		result = append(result, TempReading{
-			Label:       label,
-			Description: zoneType,
-			Value:       temp,
-		})
-	}
-	return result
-}
-
-func formatZoneLabel(zoneType string) string {
-	// Make zone types human-readable
-	replacer := strings.NewReplacer(
-		"cluster0_thermal", "Cluster 0",
-		"cluster1_thermal", "Cluster 1",
-		"cluster2_thermal", "Cluster 2",
-		"cluster3_thermal", "Cluster 3",
-		"x86_pkg_temp", "CPU Package",
-		"coretemp", "CPU Core",
-		"k10temp", "CPU",
-		"amdgpu", "AMD GPU",
-		"iwlwifi", "WiFi",
-		"pch_skylake", "PCH",
-		"pch_cannonlake", "PCH",
-		"_thermal", "",
-	)
-	label := replacer.Replace(zoneType)
-	if label == zoneType {
-		// Fallback: title case
-		label = strings.Title(strings.ReplaceAll(zoneType, "_", " "))
-	}
-	return label
-}
-
-func readTempFile(path string) int {
+func readMilliTemp(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0
 	}
-	val, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	v, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 	if err != nil {
 		return 0
 	}
-	return int(val / 1000)
+	return int(v / 1000)
+}
+
+var zoneLabels = map[string]string{
+	"cluster0_thermal": "Cluster 0",
+	"cluster1_thermal": "Cluster 1",
+	"cluster2_thermal": "Cluster 2",
+	"cluster3_thermal": "Cluster 3",
+	"x86_pkg_temp":     "CPU Package",
+	"coretemp":         "CPU Core",
+	"k10temp":          "CPU",
+	"amdgpu":           "AMD GPU",
+	"iwlwifi":          "WiFi",
+}
+
+var skipZones = map[string]bool{
+	"acpitz": true, "ACPI Air": true,
+	"pch_skylake": true, "pch_cannonlake": true,
+	"pch_cometlake": true, "pch_tigerlake": true,
+	"pch_alderlake": true, "INT3400 Thermal": true,
+	"B0D4": true, "TSR0": true, "TSR1": true, "TSR2": true,
+}
+
+func zoneLabel(zoneType string) string {
+	if l, ok := zoneLabels[zoneType]; ok {
+		return l
+	}
+	s := strings.ReplaceAll(zoneType, "_thermal", "")
+	s = strings.ReplaceAll(s, "_", " ")
+	words := strings.Fields(s)
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func readTemps(zones []ThermalZone) []TempReading {
+	// Manual zones from config
+	if len(zones) > 0 {
+		var out []TempReading
+		for _, z := range zones {
+			path := z.Path
+			if strings.HasPrefix(path, "/sys/") {
+				path = filepath.Join(hostSys, strings.TrimPrefix(path, "/sys"))
+			}
+			out = append(out, TempReading{
+				Label:       z.Label,
+				Description: z.Description,
+				Value:       readMilliTemp(path),
+			})
+		}
+		return out
+	}
+	// Auto-discover
+	var out []TempReading
+	seen := map[string]bool{}
+	paths, _ := filepath.Glob(filepath.Join(hostSys, "class/thermal/thermal_zone*"))
+	for _, p := range paths {
+		typeBytes, err := os.ReadFile(filepath.Join(p, "type"))
+		if err != nil {
+			continue
+		}
+		t := strings.TrimSpace(string(typeBytes))
+		if skipZones[t] || seen[t] {
+			continue
+		}
+		seen[t] = true
+		v := readMilliTemp(filepath.Join(p, "temp"))
+		if v <= 0 || v > 120 {
+			continue
+		}
+		out = append(out, TempReading{Label: zoneLabel(t), Description: t, Value: v})
+	}
+	return out
 }
 
 // ── GPU ───────────────────────────────────────────────────────────────────────
 
+func gpuTempHwmon(devPath string) int {
+	matches, _ := filepath.Glob(filepath.Join(devPath, "hwmon", "hwmon*", "temp1_input"))
+	for _, m := range matches {
+		if v := readMilliTemp(m); v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
 func readGPUs() []GPUInfo {
-	var gpus []GPUInfo
-
-	// Scan DRM cards
-	cardPattern := filepath.Join(hostSys, "class/drm/card*")
-	cards, _ := filepath.Glob(cardPattern)
-
+	var out []GPUInfo
+	cards, _ := filepath.Glob(filepath.Join(hostSys, "class/drm/card*"))
 	for _, card := range cards {
-		// Skip card render nodes
-		base := filepath.Base(card)
-		if strings.Contains(base, "-") {
+		if strings.Contains(filepath.Base(card), "-") {
 			continue
 		}
-
-		devicePath := filepath.Join(card, "device")
-
-		// Detect vendor
-		vendorData, err := os.ReadFile(filepath.Join(devicePath, "vendor"))
+		devPath := filepath.Join(card, "device")
+		vb, err := os.ReadFile(filepath.Join(devPath, "vendor"))
 		if err != nil {
 			continue
 		}
-		vendor := strings.TrimSpace(string(vendorData))
-
-		var gpu GPUInfo
-		gpu.Label = base
-
+		vendor := strings.TrimSpace(string(vb))
+		g := GPUInfo{Label: filepath.Base(card)}
 		switch vendor {
 		case "0x1002": // AMD
-			gpu.Vendor = "AMD"
-			gpu.Temp = readGPUTempHwmon(devicePath)
-			gpu.Usage = readAMDGPUUsage(devicePath)
-			gpu.VRAMUsed, gpu.VRAMTotal = readAMDVRAM(devicePath)
-
+			g.Vendor = "AMD"
+			g.Temp = gpuTempHwmon(devPath)
+			if d, err := os.ReadFile(filepath.Join(devPath, "gpu_busy_percent")); err == nil {
+				g.Usage, _ = strconv.ParseFloat(strings.TrimSpace(string(d)), 64)
+			}
+			readU64 := func(f string) uint64 {
+				d, _ := os.ReadFile(filepath.Join(devPath, f))
+				v, _ := strconv.ParseUint(strings.TrimSpace(string(d)), 10, 64)
+				return v / (1024 * 1024)
+			}
+			g.VRAMTotal = readU64("mem_info_vram_total")
+			g.VRAMUsed = readU64("mem_info_vram_used")
 		case "0x8086": // Intel
-			gpu.Vendor = "Intel"
-			gpu.Temp = readGPUTempHwmon(devicePath)
-			gpu.Usage = readIntelGPUUsage(card)
-
+			g.Vendor = "Intel"
+			g.Temp = gpuTempHwmon(devPath)
 		default:
 			continue
 		}
-
-		// Only include if we got meaningful data
-		if gpu.Temp > 0 || gpu.Usage > 0 {
-			gpus = append(gpus, gpu)
+		if g.Temp > 0 || g.Usage > 0 {
+			out = append(out, g)
 		}
 	}
-
-	return gpus
+	return out
 }
 
-func readGPUTempHwmon(devicePath string) int {
-	// /sys/class/drm/card*/device/hwmon/hwmon*/temp1_input
-	hwmonPattern := filepath.Join(devicePath, "hwmon", "hwmon*", "temp1_input")
-	matches, _ := filepath.Glob(hwmonPattern)
-	for _, m := range matches {
-		if t := readTempFile(m); t > 0 {
-			return t
+// ── Disks ─────────────────────────────────────────────────────────────────────
+
+var skipFSTypes = map[string]bool{
+	"overlay": true, "tmpfs": true, "devtmpfs": true, "squashfs": true,
+	"ramfs": true, "sysfs": true, "proc": true, "devpts": true,
+	"cgroup": true, "cgroup2": true, "pstore": true, "bpf": true,
+	"tracefs": true, "debugfs": true, "securityfs": true, "fusectl": true,
+	"hugetlbfs": true, "mqueue": true, "autofs": true, "rpc_pipefs": true,
+}
+
+var skipMountPrefixes = []string{
+	"/proc", "/sys", "/dev", "/run", "/host", "/snap",
+}
+
+func parseMounts() [][3]string {
+	data, _ := os.ReadFile(filepath.Join(hostProc, "mounts"))
+	var out [][3]string
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 {
+			out = append(out, [3]string{f[0], f[1], f[2]})
 		}
 	}
-	return 0
+	return out
 }
 
-func readAMDGPUUsage(devicePath string) float64 {
-	data, err := os.ReadFile(filepath.Join(devicePath, "gpu_busy_percent"))
-	if err != nil {
-		return 0
-	}
-	val, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
-	if err != nil {
-		return 0
-	}
-	return val
+func isBlockDevice(device string) bool {
+	return strings.HasPrefix(device, "/dev/")
 }
 
-func readAMDVRAM(devicePath string) (usedMB, totalMB uint64) {
-	readMB := func(file string) uint64 {
-		data, err := os.ReadFile(filepath.Join(devicePath, file))
-		if err != nil {
-			return 0
-		}
-		val, _ := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
-		return val / (1024 * 1024)
-	}
-	totalMB = readMB("mem_info_vram_total")
-	usedMB = readMB("mem_info_vram_used")
-	return
-}
-
-func readIntelGPUUsage(cardPath string) float64 {
-	// Intel GPU usage via rc6 residency — rough approximation
-	// rc6_residency_ms gives time GPU was idle — invert for usage
-	data, err := os.ReadFile(filepath.Join(cardPath, "gt", "gt0", "rc6_residency_ms"))
-	if err != nil {
-		return 0
-	}
-	_ = data
-	// rc6 residency is complex to calculate accurately without baseline
-	// Return 0 for now — temp is more useful than a misleading usage %
-	return 0
-}
-
-// ── Disk ──────────────────────────────────────────────────────────────────────
-
-func isRealDisk(device, mount, fstype string) bool {
-	if !strings.HasPrefix(device, "/dev/") {
-		return false
-	}
-	switch fstype {
-	case "overlay", "tmpfs", "devtmpfs", "squashfs", "ramfs",
-		"sysfs", "proc", "devpts", "cgroup", "cgroup2",
-		"pstore", "bpf", "tracefs", "debugfs", "securityfs",
-		"fusectl", "hugetlbfs", "mqueue", "autofs", "rpc_pipefs":
-		return false
-	}
-	// Skip system paths
-	for _, prefix := range []string{"/proc", "/sys", "/dev", "/run", "/host", "/snap"} {
-		if strings.HasPrefix(mount, prefix) {
-			return false
+func skipMount(mount string) bool {
+	for _, p := range skipMountPrefixes {
+		if strings.HasPrefix(mount, p) {
+			return true
 		}
 	}
-	// Only accept root (/) and simple single-level mount points like /data /boot /home
-	// This excludes all container bind mounts like /config/config.json /etc/resolv.conf
-	// A real mount point has at most 2 path components: / or /something
-	parts := strings.Split(strings.Trim(mount, "/"), "/")
-	if len(parts) > 1 {
+	return false
+}
+
+// isDisplayMount — only show / and single-level mounts for disk cards
+// This filters out all container bind mounts (files)
+func isDisplayMount(mount string) bool {
+	if skipMount(mount) {
 		return false
 	}
 	// Must be a directory
 	info, err := os.Stat(mount)
 	if err != nil || !info.IsDir() {
+		return false
+	}
+	// Only root or single component mounts: /, /data, /home — not /config/file.json
+	trimmed := strings.Trim(mount, "/")
+	if strings.Contains(trimmed, "/") {
 		return false
 	}
 	// No dots in mount name
@@ -501,38 +444,19 @@ func isRealDisk(device, mount, fstype string) bool {
 	return true
 }
 
-func deviceLabel(device string) string {
-	return filepath.Base(device)
-}
-
-func readDisks() []DiskInfo {
-	data, err := os.ReadFile(filepath.Join(hostProc, "mounts"))
-	if err != nil {
-		return nil
-	}
-
+func readDisks() []DiskStat {
+	mounts := parseMounts()
 	seen := map[string]bool{}
-	var disks []DiskInfo
+	var out []DiskStat
 
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+	for _, m := range mounts {
+		device, mount, fstype := m[0], m[1], m[2]
+		if !isBlockDevice(device) || skipFSTypes[fstype] {
 			continue
 		}
-		device := fields[0]
-		mount := fields[1]
-		fstype := fields[2]
-
-		// Only real filesystems
-		if !strings.HasPrefix(device, "/dev/") {
+		if !isDisplayMount(mount) {
 			continue
 		}
-		// Skip docker overlays, tmpfs, etc
-		switch fstype {
-		case "overlay", "tmpfs", "devtmpfs", "squashfs":
-			continue
-		}
-		// Skip duplicate mounts of same device
 		if seen[device] {
 			continue
 		}
@@ -542,68 +466,174 @@ func readDisks() []DiskInfo {
 		if err := syscall.Statfs(mount, &stat); err != nil {
 			continue
 		}
-
 		total := stat.Blocks * uint64(stat.Bsize)
 		free := stat.Bavail * uint64(stat.Bsize)
 		used := total - free
 
-		if total == 0 {
+		if total < 256*1024*1024 { // skip tiny partitions < 256MB
 			continue
 		}
 
-		// Show device name and mount point cleanly
-		label := deviceLabel(device)
-		if mount == "/" {
-			label = deviceLabel(device) + " (/)"
+		// Clean label: device name only, with mount hint for non-root
+		dev := filepath.Base(device)
+		label := dev
+		if mount != "/" {
+			label = dev + " " + mount
 		}
-		disks = append(disks, DiskInfo{
+
+		out = append(out, DiskStat{
+			Device:  dev,
 			Mount:   label,
-			FSType:  fstype,
-			Total:   total / (1024 * 1024 * 1024),
-			Used:    used / (1024 * 1024 * 1024),
-			Free:    free / (1024 * 1024 * 1024),
+			TotalGB: total / (1024 * 1024 * 1024),
+			UsedGB:  used / (1024 * 1024 * 1024),
+			FreeGB:  free / (1024 * 1024 * 1024),
 			Percent: math.Round(float64(used)*100/float64(total)*10) / 10,
 		})
 	}
-	return disks
+	return out
+}
+
+// ── Storage info (type + size for system section) ─────────────────────────────
+
+type StorageDevice struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"`  // NVMe, SSD, HDD, eMMC, SD
+	SizeGB uint64 `json:"size_gb"`
+}
+
+func detectStorageDevices() []StorageDevice {
+	// Read /sys/block for all block devices
+	blockPath := filepath.Join(hostSys, "block")
+	entries, err := os.ReadDir(blockPath)
+	if err != nil {
+		return nil
+	}
+
+	var out []StorageDevice
+	for _, e := range entries {
+		name := e.Name()
+
+		// Skip loop, ram, dm devices
+		if strings.HasPrefix(name, "loop") ||
+			strings.HasPrefix(name, "ram") ||
+			strings.HasPrefix(name, "dm-") ||
+			strings.HasPrefix(name, "zram") {
+			continue
+		}
+
+		devPath := filepath.Join(blockPath, name)
+
+		// Get size in sectors (512 bytes each)
+		sizeData, err := os.ReadFile(filepath.Join(devPath, "size"))
+		if err != nil {
+			continue
+		}
+		sectors, _ := strconv.ParseUint(strings.TrimSpace(string(sizeData)), 10, 64)
+		sizeGB := sectors * 512 / (1024 * 1024 * 1024)
+		if sizeGB == 0 {
+			continue
+		}
+
+		// Detect storage type
+		storageType := detectStorageType(devPath, name)
+
+		out = append(out, StorageDevice{
+			Name:   name,
+			Type:   storageType,
+			SizeGB: sizeGB,
+		})
+	}
+	return out
+}
+
+func detectStorageType(devPath, name string) string {
+	// NVMe — device name starts with nvme
+	if strings.HasPrefix(name, "nvme") {
+		return "NVMe"
+	}
+
+	// eMMC — device name starts with mmcblk
+	if strings.HasPrefix(name, "mmcblk") {
+		// Check if it's eMMC or SD card
+		typeFile := filepath.Join(devPath, "device", "type")
+		if data, err := os.ReadFile(typeFile); err == nil {
+			t := strings.TrimSpace(string(data))
+			if t == "MMC" {
+				return "eMMC"
+			}
+			return "SD"
+		}
+		return "eMMC"
+	}
+
+	// SATA/USB — check rotational flag
+	rotData, err := os.ReadFile(filepath.Join(devPath, "queue", "rotational"))
+	if err == nil {
+		rot := strings.TrimSpace(string(rotData))
+		if rot == "0" {
+			return "SSD"
+		}
+		if rot == "1" {
+			return "HDD"
+		}
+	}
+
+	// Check if USB
+	if _, err := os.Stat(filepath.Join(devPath, "device", "idVendor")); err == nil {
+		return "USB"
+	}
+
+	return "Storage"
+}
+
+func formatStorageSummary(devices []StorageDevice) string {
+	if len(devices) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, d := range devices {
+		if d.SizeGB >= 1024 {
+			parts = append(parts, fmt.Sprintf("%s %.1fTB", d.Type, float64(d.SizeGB)/1024))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s %dGB", d.Type, d.SizeGB))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // ── Arch detection ────────────────────────────────────────────────────────────
 
 func detectArch() string {
-	data, err := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
-	if err != nil {
-		return ""
-	}
+	data, _ := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
 	content := string(data)
 
 	// RISC-V
 	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "isa") {
-			isa := strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
-			summary := "rv64"
-			if strings.Contains(isa, "imafd") || strings.Contains(isa, "g") {
-				summary += "g"
-			}
-			if strings.Contains(isa, "c") {
-				summary += "c"
-			}
-			if strings.Contains(isa, "v") {
-				summary += "v"
-			}
-			arch := "RISC-V " + summary
-			// Add uarch
-			for _, l := range strings.Split(content, "\n") {
-				if strings.HasPrefix(l, "uarch") {
-					parts := strings.Split(strings.TrimSpace(strings.SplitN(l, ":", 2)[1]), ",")
-					if len(parts) > 1 {
-						arch += " · " + strings.ToUpper(parts[1])
-					}
-					break
-				}
-			}
-			return arch
+		if !strings.HasPrefix(line, "isa") {
+			continue
 		}
+		isa := strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
+		s := "rv64"
+		if strings.Contains(isa, "imafd") {
+			s += "g"
+		}
+		if strings.Contains(isa, "c") {
+			s += "c"
+		}
+		if strings.Contains(isa, "v") {
+			s += "v"
+		}
+		arch := "RISC-V " + s
+		for _, l := range strings.Split(content, "\n") {
+			if strings.HasPrefix(l, "uarch") {
+				parts := strings.Split(strings.TrimSpace(strings.SplitN(l, ":", 2)[1]), ",")
+				if len(parts) > 1 {
+					arch += " · " + strings.ToUpper(parts[1])
+				}
+				break
+			}
+		}
+		return arch
 	}
 
 	// ARM
@@ -620,69 +650,127 @@ func detectArch() string {
 	// x86
 	for _, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(line, "flags") {
-			if strings.Contains(line, " lm ") || strings.Contains(line, " lm\t") {
+			if strings.Contains(line, " lm") {
 				return "x86-64"
 			}
 			return "x86"
 		}
-		if strings.HasPrefix(line, "model name") {
-			if strings.Contains(strings.ToLower(line), "intel") || strings.Contains(strings.ToLower(line), "amd") {
-				return "x86-64"
-			}
-		}
 	}
-
 	return ""
 }
 
-
 // ── Hardware auto-detection ───────────────────────────────────────────────────
 
-func detectCPU() string {
-	data, err := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
-	if err != nil {
-		return ""
+func isValidBoardName(s string) bool {
+	if s == "" {
+		return false
 	}
-	var modelName, hardware string
-	cores := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "model name") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 && modelName == "" {
-				modelName = strings.TrimSpace(parts[1])
+	bad := []string{
+		"To be filled by O.E.M.", "Default string", "None",
+		"Not Applicable", "N/A", "System Product Name",
+		"System Version", "Base Board Product Name",
+	}
+	for _, b := range bad {
+		if strings.EqualFold(s, b) {
+			return false
+		}
+	}
+	// Skip storage-device-style IDs
+	if strings.Contains(s, "[") && strings.Contains(s, "]") {
+		return false
+	}
+	return true
+}
+
+func detectBoard() string {
+	// x86 DMI
+	for _, name := range []string{"product_name", "board_name"} {
+		data, err := os.ReadFile(filepath.Join(hostSys, "class", "dmi", "id", name))
+		if err == nil {
+			if v := strings.TrimSpace(string(data)); isValidBoardName(v) {
+				return v
 			}
 		}
+	}
+	// ARM/RISC-V device tree
+	for _, p := range []string{
+		filepath.Join(hostProc, "device-tree", "model"),
+		filepath.Join(hostSys, "firmware", "devicetree", "base", "model"),
+	} {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			v := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", ""))
+			if v != "" {
+				return v
+			}
+		}
+	}
+	// cpuinfo Hardware (older ARM)
+	data, _ := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
+	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "Hardware") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
-				hardware = strings.TrimSpace(parts[1])
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+func detectCPU() string {
+	data, _ := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
+	var model string
+	cores := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "model name") && model == "" {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				model = strings.TrimSpace(parts[1])
 			}
 		}
 		if strings.HasPrefix(line, "processor") {
 			cores++
 		}
 	}
-	name := modelName
-	if name == "" {
-		name = hardware
-	}
-	if name == "" {
+	if model == "" {
 		return ""
 	}
 	if cores > 0 {
-		return fmt.Sprintf("%s · %d cores", name, cores)
+		return fmt.Sprintf("%s · %d cores", model, cores)
 	}
-	return name
+	return model
+}
+
+func detectRAM() string {
+	data, _ := os.ReadFile(filepath.Join(hostProc, "meminfo"))
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		kb, err := strconv.ParseUint(f[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		gb := float64(kb) / (1024 * 1024)
+		if gb >= 1 {
+			return fmt.Sprintf("%.0f GB", gb)
+		}
+		return fmt.Sprintf("%.1f GB", gb)
+	}
+	return ""
 }
 
 func detectOS() string {
-	// Try host os-release via /host/proc/1/root
-	// /host/proc/1/root symlinks to the host root filesystem
-	for _, path := range []string{
+	for _, p := range []string{
 		"/host/proc/1/root/etc/os-release",
 		"/etc/os-release",
 	} {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
@@ -696,534 +784,237 @@ func detectOS() string {
 }
 
 func detectKernel() string {
-	data, err := os.ReadFile(filepath.Join(hostProc, "version"))
-	if err != nil {
-		return ""
-	}
-	// Format: "Linux version 6.x.x ..."
-	fields := strings.Fields(string(data))
-	if len(fields) >= 3 {
-		return fields[2]
+	data, _ := os.ReadFile(filepath.Join(hostProc, "version"))
+	f := strings.Fields(string(data))
+	if len(f) >= 3 {
+		return f[2]
 	}
 	return ""
 }
 
-func detectRAM() string {
-	data, err := os.ReadFile(filepath.Join(hostProc, "meminfo"))
-	if err != nil {
-		return ""
-	}
-	var sizeGB float64
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "MemTotal:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				kb, err := strconv.ParseUint(fields[1], 10, 64)
-				if err == nil {
-					sizeGB = float64(kb) / (1024 * 1024)
-				}
-			}
-			break
-		}
-	}
-	if sizeGB == 0 {
-		return ""
-	}
-	sizeStr := fmt.Sprintf("%.0f GB", sizeGB)
-	if sizeGB < 1 {
-		sizeStr = fmt.Sprintf("%.1f GB", sizeGB)
-	}
-	if ramType := detectRAMType(); ramType != "" {
-		return sizeStr + " " + ramType
-	}
-	return sizeStr
-}
-
-func detectRAMType() string {
-	// Try DMI Type 17 (Memory Device) entries — works on x86 with SMBIOS
-	entries, err := filepath.Glob(filepath.Join(hostSys, "firmware", "dmi", "entries", "17-*", "raw"))
-	if err == nil && len(entries) > 0 {
-		typeMap := map[byte]string{
-			0x11: "DDR", 0x12: "DDR2", 0x13: "DDR2 FB-DIMM",
-			0x17: "DDR3", 0x18: "DDR4", 0x19: "DDR5",
-			0x1A: "LPDDR", 0x1B: "LPDDR2", 0x1C: "LPDDR3",
-			0x1D: "LPDDR4", 0x1E: "LPDDR5",
-		}
-		seen := map[string]bool{}
-		for _, entry := range entries {
-			raw, err := os.ReadFile(entry)
-			if err != nil || len(raw) < 23 {
-				continue
-			}
-			// raw[0] = SMBIOS type (17=0x11), raw[1] = formatted length
-			if raw[0] != 17 || raw[1] < 0x13 {
-				continue
-			}
-			// Memory Type field at offset 0x12 within formatted area
-			// Formatted area starts at byte 4, so absolute offset = 4 + 0x12 = 22
-			memType := raw[22]
-			if name, ok := typeMap[memType]; ok {
-				seen[name] = true
-			}
-		}
-		var types []string
-		for t := range seen {
-			types = append(types, t)
-		}
-		if len(types) > 0 {
-			sort.Strings(types)
-			return strings.Join(types, " + ")
-		}
-	}
-
-	// Fallback: try EDAC dimm_type
-	edacDirs, err := filepath.Glob(filepath.Join(hostSys, "devices", "system", "edac", "mc", "mc*", "dimm*", "dimm_type"))
-	if err == nil && len(edacDirs) > 0 {
-		seen := map[string]bool{}
-		for _, p := range edacDirs {
-			data, err := os.ReadFile(p)
-			if err != nil {
-				continue
-			}
-			name := strings.TrimSpace(string(data))
-			if name != "" {
-				seen[name] = true
-			}
-		}
-		var types []string
-		for t := range seen {
-			types = append(types, t)
-		}
-		if len(types) > 0 {
-			sort.Strings(types)
-			return strings.Join(types, " + ")
-		}
-	}
-	return ""
-}
-
-func isValidBoardName(name string) bool {
-	if name == "" {
-		return false
-	}
-	invalid := []string{
-		"To be filled by O.E.M.", "Default string", "None",
-		"Not Applicable", "N/A", "System Product Name",
-		"System Version", "Base Board Product Name",
-	}
-	for _, inv := range invalid {
-		if strings.EqualFold(name, inv) {
-			return false
-		}
-	}
-	// Skip names that look like storage device IDs e.g. "001-004-[F4_SSD]"
-	if strings.Contains(name, "[") && strings.Contains(name, "]") {
-		return false
-	}
-	return true
-}
-
-func detectBoard() string {
-	// Try DMI (x86) — hostSys is /host/sys, dmi is under class/dmi/id/
-	for _, name := range []string{"product_name", "board_name"} {
-		path := filepath.Join(hostSys, "class", "dmi", "id", name)
-		data, err := os.ReadFile(path)
-		if err == nil {
-			val := strings.TrimSpace(string(data))
-			if isValidBoardName(val) {
-				return val
-			}
-		}
-	}
-	// Try device-tree model (ARM/RISC-V)
-	for _, dtPath := range []string{
-		filepath.Join(hostProc, "device-tree", "model"),
-		filepath.Join(hostSys, "firmware", "devicetree", "base", "model"),
-	} {
-		data, err := os.ReadFile(dtPath)
-		if err == nil {
-			name := strings.TrimSpace(string(data))
-			name = strings.ReplaceAll(name, "\x00", "")
-			if name != "" {
-				return name
-			}
-		}
-	}
-	// Try cpuinfo Hardware field (older ARM)
-	cpudata, err := os.ReadFile(filepath.Join(hostProc, "cpuinfo"))
-	if err == nil {
-		for _, line := range strings.Split(string(cpudata), "\n") {
-			if strings.HasPrefix(line, "Hardware") {
-				parts := strings.SplitN(line, ":", 2)
-				if len(parts) == 2 {
-					return strings.TrimSpace(parts[1])
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func detectStorage() string {
-	data, err := os.ReadFile(filepath.Join(hostProc, "mounts"))
-	if err != nil {
-		return ""
-	}
-	seen := map[string]bool{}
-	typeSizes := map[string]uint64{}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		device, mount, fstype := fields[0], fields[1], fields[2]
-		if !isRealDisk(device, mount, fstype) {
-			continue
-		}
-		devBase := storageDevBase(device)
-		if devBase == "" || seen[devBase] {
-			continue
-		}
-		seen[devBase] = true
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(mount, &stat); err == nil {
-			gb := stat.Blocks * uint64(stat.Bsize) / (1024 * 1024 * 1024)
-			if gb > 0 {
-				devType := storageDevType(devBase)
-				typeSizes[devType] += gb
-			}
-		}
-	}
-	if len(typeSizes) == 0 {
-		return ""
-	}
-	var total uint64
-	var typeNames []string
-	for t, s := range typeSizes {
-		total += s
-		typeNames = append(typeNames, t)
-	}
-	sort.Strings(typeNames)
-	totalStr := fmt.Sprintf("%d GB", total)
-	if total >= 1024 {
-		totalStr = fmt.Sprintf("%.1f TB", float64(total)/1024)
-	}
-	return strings.Join(typeNames, " + ") + " " + totalStr
-}
-
-func storageDevBase(device string) string {
-	base := filepath.Base(device)
-	if strings.HasPrefix(base, "nvme") {
-		if idx := strings.LastIndex(base, "p"); idx > 0 {
-			if _, err := strconv.Atoi(base[idx+1:]); err == nil {
-				return base[:idx]
-			}
-		}
-		return base
-	}
-	if strings.HasPrefix(base, "mmcblk") {
-		if idx := strings.LastIndex(base, "p"); idx > 0 {
-			if _, err := strconv.Atoi(base[idx+1:]); err == nil {
-				return base[:idx]
-			}
-		}
-		return base
-	}
-	// sd*, vd*, xvd* — strip trailing digits
-	return strings.TrimRight(base, "0123456789")
-}
-
-func storageDevType(devBase string) string {
-	if strings.HasPrefix(devBase, "nvme") {
-		return "NVMe"
-	}
-	if strings.HasPrefix(devBase, "mmcblk") {
-		return "eMMC"
-	}
-	if strings.HasPrefix(devBase, "vd") {
-		return "VirtIO"
-	}
-	if strings.HasPrefix(devBase, "xvd") {
-		return "Xen"
-	}
-	// sd* or anything else — check rotational
-	rotPath := filepath.Join(hostSys, "block", devBase, "queue", "rotational")
-	data, err := os.ReadFile(rotPath)
-	if err != nil {
-		return "SSD"
-	}
-	if strings.TrimSpace(string(data)) == "0" {
-		return "SSD"
-	}
-	return "HDD"
-}
-
-// mergeHardwareConfig auto-detects all hardware fields.
-// Config values override auto-detected values only if non-empty.
-// JSON null and "" both result in auto-detection.
-func mergeHardwareConfig(h *HardwareConfig) {
-	// Always auto-detect first
-	autoBoard   := detectBoard()
-	autoCPU     := detectCPU()
-	autoRAM     := detectRAM()
-	autoStorage := detectStorage()
-	autoOS      := detectOS()
-	autoKernel  := detectKernel()
-
-	// Use auto-detected value unless config provides a non-empty override
+func mergeHardware(h *HardwareConfig) {
 	if strings.TrimSpace(h.Board) == "" {
-		h.Board = autoBoard
+		h.Board = detectBoard()
 	}
 	if strings.TrimSpace(h.CPU) == "" {
-		h.CPU = autoCPU
+		h.CPU = detectCPU()
 	}
 	if strings.TrimSpace(h.RAM) == "" {
-		h.RAM = autoRAM
-	}
-	if strings.TrimSpace(h.Storage) == "" {
-		h.Storage = autoStorage
+		h.RAM = detectRAM()
 	}
 	if strings.TrimSpace(h.OS) == "" {
-		h.OS = autoOS
+		h.OS = detectOS()
 	}
 	if strings.TrimSpace(h.Kernel) == "" {
-		h.Kernel = autoKernel
+		h.Kernel = detectKernel()
 	}
-	log.Printf("auto-detect: board=%q cpu=%q ram=%q os=%q kernel=%q",
-		autoBoard, autoCPU, autoRAM, autoOS, autoKernel)
+	// Storage: always auto-detect type and size from block devices
+	if strings.TrimSpace(h.Storage) == "" {
+		devices := detectStorageDevices()
+		h.Storage = formatStorageSummary(devices)
+	}
+	log.Printf("hardware detected — board:%q cpu:%q ram:%q storage:%q",
+		h.Board, h.CPU, h.RAM, h.Storage)
+}
+
+// ── JSON helpers ──────────────────────────────────────────────────────────────
+
+// stripComments removes all keys prefixed with _ at any nesting depth
+func stripComments(data []byte) []byte {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err == nil {
+		clean := make(map[string]json.RawMessage)
+		for k, v := range obj {
+			if strings.HasPrefix(k, "_") {
+				continue
+			}
+			clean[k] = stripComments(v)
+		}
+		if b, err := json.Marshal(clean); err == nil {
+			return b
+		}
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err == nil {
+		for i, v := range arr {
+			arr[i] = stripComments(v)
+		}
+		if b, err := json.Marshal(arr); err == nil {
+			return b
+		}
+	}
+	return data
 }
 
 // ── Stats collector ───────────────────────────────────────────────────────────
 
 type StatsCollector struct {
-	mu       sync.RWMutex
-	current  StatsResponse
-	prevSample cpuSample
-	arch     string
-	config   *DashboardConfig
+	mu     sync.RWMutex
+	latest StatsResponse
+	prev   cpuSample
+	arch   string
+	cfg    *DashboardConfig
 }
 
-func NewStatsCollector(cfg *DashboardConfig) *StatsCollector {
-	s := &StatsCollector{config: cfg}
+func newCollector(cfg *DashboardConfig) *StatsCollector {
+	s := &StatsCollector{cfg: cfg}
 	s.arch = detectArch()
-	if cfg != nil && cfg.Hardware.Arch != "" {
+	if cfg != nil && strings.TrimSpace(cfg.Hardware.Arch) != "" {
 		s.arch = cfg.Hardware.Arch
 	}
-	// Prime CPU sample
-	s.prevSample, _ = readCPUSample()
+	s.prev, _ = readCPUSample()
 	return s
 }
 
-func (s *StatsCollector) Collect() {
-	// CPU — delta from previous sample
+func (s *StatsCollector) collect() {
 	curr, err := readCPUSample()
-	var cpuPct float64
+	var cpu float64
 	if err == nil {
-		diffTotal := curr.total - s.prevSample.total
-		diffIdle := curr.idle - s.prevSample.idle
-		if diffTotal > 0 {
-			cpuPct = math.Round(float64(diffTotal-diffIdle)*100/float64(diffTotal)*10) / 10
+		dt := curr.total - s.prev.total
+		di := curr.idle - s.prev.idle
+		if dt > 0 {
+			cpu = math.Round(float64(dt-di)*100/float64(dt)*10) / 10
 		}
-		s.prevSample = curr
+		s.prev = curr
 	}
 
-	ramUsed, ramTotal, ramPct, _ := readRAM()
-	load1, load5, load15, _ := readLoadAvg()
-	uptime, _ := readUptime()
+	ramUsed, ramTotal, ramPct := readRAM()
+	l1, l5, l15 := readLoadAvg()
 
 	var zones []ThermalZone
-	if s.config != nil {
-		zones = s.config.Thermal.Zones
+	if s.cfg != nil {
+		zones = s.cfg.Thermal.Zones
 	}
-	temps := readThermalZones(zones)
-	disks := readDisks()
-	gpus := readGPUs()
 
 	s.mu.Lock()
-	s.current = StatsResponse{
-		CPUPercent:    cpuPct,
+	s.latest = StatsResponse{
+		CPUPercent:    cpu,
 		RAMPercent:    ramPct,
 		RAMUsedMB:     ramUsed,
 		RAMTotalMB:    ramTotal,
-		Temps:         temps,
-		Disks:         disks,
-		GPUs:          gpus,
-		Load1m:        load1,
-		Load5m:        load5,
-		Load15m:       load15,
-		UptimeSeconds: uptime,
+		Temps:         readTemps(zones),
+		Disks:         readDisks(),
+		GPUs:          readGPUs(),
+		Load1m:        l1,
+		Load5m:        l5,
+		Load15m:       l15,
+		UptimeSeconds: readUptime(),
 		Arch:          s.arch,
 		Timestamp:     time.Now().Unix(),
 	}
 	s.mu.Unlock()
 }
 
-func (s *StatsCollector) Get() StatsResponse {
+func (s *StatsCollector) get() StatsResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.current
+	return s.latest
 }
 
-func (s *StatsCollector) Run(interval time.Duration) {
-	s.Collect() // immediate first collection
-	ticker := time.NewTicker(interval)
-	for range ticker.C {
-		s.Collect()
+func (s *StatsCollector) run(d time.Duration) {
+	s.collect()
+	for range time.NewTicker(d).C {
+		s.collect()
 	}
 }
 
 // ── Status checker ────────────────────────────────────────────────────────────
 
-type ServicesConfig struct {
-	Servers []struct {
-		Services []struct {
-			URL      string `json:"url"`
-			Disabled bool   `json:"disabled"`
-		} `json:"services"`
-	} `json:"servers"`
-}
-
 type StatusChecker struct {
-	mu       sync.RWMutex
-	current  StatusResponse
-	client   *http.Client
-	configDir string
+	mu      sync.RWMutex
+	latest  StatusResponse
+	cfgDir  string
+	client  *http.Client
 }
 
-func NewStatusChecker(configDir string) *StatusChecker {
+func newChecker(dir string) *StatusChecker {
 	return &StatusChecker{
-		configDir: configDir,
+		cfgDir: dir,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: tlsConfigInsecure(),
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 		},
 	}
 }
 
-func (sc *StatusChecker) loadURLs() []string {
-	data, err := os.ReadFile(filepath.Join(sc.configDir, "services.json"))
+func (sc *StatusChecker) urls() []string {
+	data, err := os.ReadFile(filepath.Join(sc.cfgDir, "services.json"))
 	if err != nil {
 		return nil
 	}
-	var cfg ServicesConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	var cfg struct {
+		Servers []struct {
+			Services []struct {
+				URL      string `json:"url"`
+				Disabled bool   `json:"disabled"`
+			} `json:"services"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(stripComments(data), &cfg); err != nil {
 		return nil
 	}
-	var urls []string
-	for _, server := range cfg.Servers {
-		for _, svc := range server.Services {
+	var out []string
+	for _, srv := range cfg.Servers {
+		for _, svc := range srv.Services {
 			if !svc.Disabled && svc.URL != "" {
-				urls = append(urls, svc.URL)
+				out = append(out, svc.URL)
 			}
 		}
 	}
-	return urls
+	return out
 }
 
-func (sc *StatusChecker) Check() {
-	urls := sc.loadURLs()
-	results := make(map[string]string, len(urls))
-
+func (sc *StatusChecker) check() {
+	urls := sc.urls()
+	res := make(map[string]string, len(urls))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-
-	for _, url := range urls {
+	for _, u := range urls {
 		wg.Add(1)
-		go func(u string) {
+		go func(url string) {
 			defer wg.Done()
 			state := "offline"
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 			if err == nil {
-				resp, err := sc.client.Do(req)
-				if err == nil {
+				if resp, err := sc.client.Do(req); err == nil {
 					resp.Body.Close()
-					// Any HTTP response = service is running
 					state = "online"
 				}
 			}
 			mu.Lock()
-			results[u] = state
+			res[url] = state
 			mu.Unlock()
-		}(url)
+		}(u)
 	}
 	wg.Wait()
-
 	sc.mu.Lock()
-	sc.current = StatusResponse{
-		Timestamp: time.Now().Unix(),
-		Services:  results,
-	}
+	sc.latest = StatusResponse{Timestamp: time.Now().Unix(), Services: res}
 	sc.mu.Unlock()
 }
 
-func (sc *StatusChecker) Get() StatusResponse {
+func (sc *StatusChecker) get() StatusResponse {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
-	return sc.current
+	return sc.latest
 }
 
-func (sc *StatusChecker) Run(interval time.Duration) {
-	sc.Check()
-	ticker := time.NewTicker(interval)
-	for range ticker.C {
-		sc.Check()
+func (sc *StatusChecker) run(d time.Duration) {
+	sc.check()
+	for range time.NewTicker(d).C {
+		sc.check()
 	}
 }
 
-// ── TLS helper ────────────────────────────────────────────────────────────────
+// ── HTTP ──────────────────────────────────────────────────────────────────────
 
-func tlsConfigInsecure() *tls.Config {
-	return &tls.Config{InsecureSkipVerify: true}
-}
-
-// ── HTTP handlers ─────────────────────────────────────────────────────────────
-
-func jsonHandler(w http.ResponseWriter, data interface{}) {
+func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// stripCommentKeys removes _ prefixed keys from top-level JSON object.
-func stripCommentKeys(data []byte) []byte {
-	return stripCommentKeysDeep(data)
-}
-
-// stripCommentKeysDeep recursively removes _ prefixed keys from JSON at all levels.
-func stripCommentKeysDeep(data []byte) []byte {
-	// Try as object
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err == nil {
-		result := make(map[string]json.RawMessage)
-		for k, v := range raw {
-			if strings.HasPrefix(k, "_") {
-				continue
-			}
-			result[k] = json.RawMessage(stripCommentKeysDeep(v))
-		}
-		if b, err := json.Marshal(result); err == nil {
-			return b
-		}
-	}
-	// Try as array
-	var arr []json.RawMessage
-	if err := json.Unmarshal(data, &arr); err == nil {
-		result := make([]json.RawMessage, len(arr))
-		for i, v := range arr {
-			result[i] = json.RawMessage(stripCommentKeysDeep(v))
-		}
-		if b, err := json.Marshal(result); err == nil {
-			return b
-		}
-	}
-	// Scalar value — return as-is
-	return data
+	json.NewEncoder(w).Encode(v)
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -1231,50 +1022,38 @@ func stripCommentKeysDeep(data []byte) []byte {
 func main() {
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("hs-dashboard ")
-	log.Printf("starting on port %s", listenPort)
-	log.Printf("host proc: %s", hostProc)
-	log.Printf("host sys:  %s", hostSys)
-	log.Printf("config:    %s", configDir)
+	log.Printf("starting — port:%s proc:%s sys:%s config:%s",
+		listenPort, hostProc, hostSys, configDir)
 
-	// Load dashboard config
-	var cfg *DashboardConfig
-	cfgData, err := os.ReadFile(filepath.Join(configDir, "config.json"))
-	if err != nil {
-		log.Printf("warning: no config.json found — auto-detecting hardware")
-	}
-
-	cfg = &DashboardConfig{}
-	// Set safe defaults
+	// Default config
+	cfg := &DashboardConfig{}
 	cfg.Display.Theme = "auto"
 	cfg.Display.Scale = 1.2
 	cfg.Display.Timezone = "UTC"
 	cfg.Display.RefreshStatsMs = 5000
 	cfg.Display.RefreshStatusMs = 30000
+	cfg.Logo.Height = 48
 
-	if err == nil {
-		// Strip _comment_* keys before parsing — they cause field conflicts
-		cleaned := stripCommentKeys(cfgData)
-		if err2 := json.Unmarshal(cleaned, cfg); err2 != nil {
-			log.Printf("warning: config.json parse error: %v", err2)
-		} else {
-			log.Printf("config loaded: %s (%s)", cfg.Server.Name, cfg.Server.FQDN)
-		}
+	// Load user config
+	if raw, err := os.ReadFile(filepath.Join(configDir, "config.json")); err != nil {
+		log.Printf("no config.json — using auto-detected values")
+	} else if err := json.Unmarshal(stripComments(raw), cfg); err != nil {
+		log.Printf("config.json error: %v — using defaults", err)
+	} else {
+		log.Printf("config loaded: %s (%s)", cfg.Server.Name, cfg.Server.FQDN)
 	}
 
-	// Always auto-detect hardware — config values override if non-empty
-	mergeHardwareConfig(&cfg.Hardware)
-	log.Printf("hardware: board=%q cpu=%q ram=%q os=%q kernel=%q",
-		cfg.Hardware.Board, cfg.Hardware.CPU, cfg.Hardware.RAM,
-		cfg.Hardware.OS, cfg.Hardware.Kernel)
+	// Auto-detect hardware (config values override)
+	mergeHardware(&cfg.Hardware)
 
-	// Start collectors
-	stats := NewStatsCollector(cfg)
-	go stats.Run(time.Duration(statsInterval) * time.Second)
+	// Start background workers
+	collector := newCollector(cfg)
+	go collector.run(time.Duration(statsInterval) * time.Second)
 
-	status := NewStatusChecker(configDir)
-	go status.Run(time.Duration(statusInterval) * time.Second)
+	checker := newChecker(configDir)
+	go checker.run(time.Duration(statusInterval) * time.Second)
 
-	// Static files from embedded www/
+	// Embedded static files
 	wwwFS, err := fs.Sub(staticFiles, "www")
 	if err != nil {
 		log.Fatal(err)
@@ -1282,38 +1061,33 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// API endpoints
-	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
-		jsonHandler(w, stats.Get())
-	})
-
-	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		jsonHandler(w, status.Get())
-	})
-
-	// Serve merged config — auto-detected values fill in nulls from config file
+	// Serve merged config (auto-detected values fill null fields)
 	mux.HandleFunc("/config.json", func(w http.ResponseWriter, r *http.Request) {
-		jsonHandler(w, cfg)
+		writeJSON(w, cfg)
 	})
 
-	// Serve services.json — strip _comment_* keys before serving
+	// Serve services.json with comments stripped
 	mux.HandleFunc("/services.json", func(w http.ResponseWriter, r *http.Request) {
 		data, err := os.ReadFile(filepath.Join(configDir, "services.json"))
 		if err != nil {
-			http.Error(w, "services.json not found", http.StatusNotFound)
+			http.Error(w, "not found", 404)
 			return
 		}
-		cleaned := stripCommentKeysDeep(data)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-cache")
-		w.Write(cleaned)
+		w.Write(stripComments(data))
 	})
 
-	// Static files (embedded)
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, collector.get())
+	})
+
+	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, checker.get())
+	})
+
 	mux.Handle("/", http.FileServer(http.FS(wwwFS)))
 
-	log.Printf("ready — http://0.0.0.0:%s", listenPort)
-	if err := http.ListenAndServe(":"+listenPort, mux); err != nil {
-		log.Fatal(err)
-	}
+	log.Printf("ready → http://0.0.0.0:%s", listenPort)
+	log.Fatal(http.ListenAndServe(":"+listenPort, mux))
 }

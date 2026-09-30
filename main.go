@@ -96,6 +96,8 @@ type DisplayConfig struct {
 	Scale           float64 `json:"scale"`
 	RefreshStatsMs  int     `json:"refresh_stats_ms"`
 	RefreshStatusMs int     `json:"refresh_status_ms"`
+	TileWidth       int     `json:"tile_width"`
+	ShowURLs        bool    `json:"show_urls"`
 }
 
 type DashboardConfig struct {
@@ -767,6 +769,7 @@ func detectRAM() string {
 
 func detectOS() string {
 	for _, p := range []string{
+		envOr("HOST_OS_RELEASE", "/host/etc/os-release"),
 		"/host/proc/1/root/etc/os-release",
 		"/etc/os-release",
 	} {
@@ -921,19 +924,29 @@ func (s *StatsCollector) run(d time.Duration) {
 // ── Status checker ────────────────────────────────────────────────────────────
 
 type StatusChecker struct {
-	mu      sync.RWMutex
-	latest  StatusResponse
-	cfgDir  string
-	client  *http.Client
+	mu       sync.RWMutex
+	latest   StatusResponse
+	cfgDir   string
+	client   *http.Client
+	failures map[string]int    // consecutive failures per URL
+	shown    map[string]string // state currently shown per URL
 }
 
 func newChecker(dir string) *StatusChecker {
 	return &StatusChecker{
-		cfgDir: dir,
+		cfgDir:   dir,
+		failures: map[string]int{},
+		shown:    map[string]string{},
 		client: &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout: 8 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+				DisableKeepAlives: true,
+			},
+			// Do not follow redirects: any HTTP response means the service is up.
+			// Following them can land on another slow host and cause false "offline".
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
 			},
 		},
 	}
@@ -966,34 +979,76 @@ func (sc *StatusChecker) urls() []string {
 	return out
 }
 
+// probe returns nil if the URL answered with any HTTP response.
+// It retries once, which absorbs one-off DNS or connection hiccups.
+func (sc *StatusChecker) probe(url string) error {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+		resp, err := sc.client.Do(req)
+		cancel()
+		if err == nil {
+			resp.Body.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	return lastErr
+}
+
 func (sc *StatusChecker) check() {
 	urls := sc.urls()
-	res := make(map[string]string, len(urls))
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	for _, u := range urls {
-		wg.Add(1)
-		go func(url string) {
-			defer wg.Done()
-			state := "offline"
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-			if err == nil {
-				if resp, err := sc.client.Do(req); err == nil {
-					resp.Body.Close()
-					state = "online"
-				}
-			}
-			mu.Lock()
-			res[url] = state
-			mu.Unlock()
-		}(u)
+	type result struct {
+		url string
+		err error
 	}
-	wg.Wait()
+	ch := make(chan result, len(urls))
+	for _, u := range urls {
+		go func(url string) { ch <- result{url, sc.probe(url)} }(u)
+	}
+
+	res := make(map[string]string, len(urls))
+	for range urls {
+		r := <-ch
+		state := "online"
+		if r.err != nil {
+			sc.failures[r.url]++
+			// Only flip online -> offline after 2 consecutive failed cycles
+			if sc.shown[r.url] == "online" && sc.failures[r.url] < 2 {
+				state = "online"
+			} else {
+				state = "offline"
+			}
+		} else {
+			sc.failures[r.url] = 0
+		}
+		if prev := sc.shown[r.url]; prev != state {
+			if r.err != nil {
+				log.Printf("status: %s %s -> %s (%v)", r.url, orDash(prev), state, r.err)
+			} else {
+				log.Printf("status: %s %s -> %s", r.url, orDash(prev), state)
+			}
+		}
+		sc.shown[r.url] = state
+		res[r.url] = state
+	}
+
 	sc.mu.Lock()
 	sc.latest = StatusResponse{Timestamp: time.Now().Unix(), Services: res}
 	sc.mu.Unlock()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func (sc *StatusChecker) get() StatusResponse {
@@ -1032,6 +1087,7 @@ func main() {
 	cfg.Display.Timezone = "UTC"
 	cfg.Display.RefreshStatsMs = 5000
 	cfg.Display.RefreshStatusMs = 30000
+	cfg.Display.TileWidth = 200
 	cfg.Logo.Height = 48
 
 	// Load user config

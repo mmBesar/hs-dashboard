@@ -48,6 +48,10 @@
     "scale": 1.2,
     "_comment_scale": "UI scale: 1.0=normal 1.2=larger 1.4=largest",
     "refresh_stats_ms": 5000,
-    "refresh_status_ms": 30000
+    "refresh_status_ms": 30000,
+    "tile_width": 200,
+    "_comment_tile_width": "Minimum tile width in px for stat/service cards. Lower = smaller tiles, more per row. Try 150-160 for a dense view.",
+    "show_urls": true,
+    "_comment_show_urls": "Set false to hide the URL line on service cards for an even more compact grid."
   }
 }

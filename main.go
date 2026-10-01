@@ -824,8 +824,15 @@ func mergeHardware(h *HardwareConfig) {
 
 // stripComments removes all keys prefixed with _ at any nesting depth
 func stripComments(data []byte) []byte {
+	// A bare JSON null unmarshals successfully into a map or slice in Go
+	// (as nil/empty), which would otherwise cause it to be silently
+	// rewritten as {} or [] below. Preserve it as-is.
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "null" {
+		return data
+	}
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(data, &obj); err == nil {
+	if err := json.Unmarshal(data, &obj); err == nil && obj != nil {
 		clean := make(map[string]json.RawMessage)
 		for k, v := range obj {
 			if strings.HasPrefix(k, "_") {
@@ -838,7 +845,7 @@ func stripComments(data []byte) []byte {
 		}
 	}
 	var arr []json.RawMessage
-	if err := json.Unmarshal(data, &arr); err == nil {
+	if err := json.Unmarshal(data, &arr); err == nil && arr != nil {
 		for i, v := range arr {
 			arr[i] = stripComments(v)
 		}
@@ -952,7 +959,18 @@ func newChecker(dir string) *StatusChecker {
 	}
 }
 
-func (sc *StatusChecker) urls() []string {
+// probeTarget pairs the URL shown/clicked in the UI with the URL actually
+// dialed for the online/offline check. They differ when a service sets
+// check_url — typically a Docker-network address (http://container:port)
+// used to avoid hairpinning back through the LAN/reverse-proxy from
+// inside the container, which commonly times out even when the service
+// is perfectly reachable from a browser on the LAN.
+type probeTarget struct {
+	Display string
+	Check   string
+}
+
+func (sc *StatusChecker) targets() []probeTarget {
 	data, err := os.ReadFile(filepath.Join(sc.cfgDir, "services.json"))
 	if err != nil {
 		return nil
@@ -961,6 +979,7 @@ func (sc *StatusChecker) urls() []string {
 		Servers []struct {
 			Services []struct {
 				URL      string `json:"url"`
+				CheckURL string `json:"check_url"`
 				Disabled bool   `json:"disabled"`
 			} `json:"services"`
 		} `json:"servers"`
@@ -968,12 +987,17 @@ func (sc *StatusChecker) urls() []string {
 	if err := json.Unmarshal(stripComments(data), &cfg); err != nil {
 		return nil
 	}
-	var out []string
+	var out []probeTarget
 	for _, srv := range cfg.Servers {
 		for _, svc := range srv.Services {
-			if !svc.Disabled && svc.URL != "" {
-				out = append(out, svc.URL)
+			if svc.Disabled || svc.URL == "" {
+				continue
 			}
+			check := strings.TrimSpace(svc.CheckURL)
+			if check == "" {
+				check = svc.URL
+			}
+			out = append(out, probeTarget{Display: svc.URL, Check: check})
 		}
 	}
 	return out
@@ -1003,18 +1027,18 @@ func (sc *StatusChecker) probe(url string) error {
 }
 
 func (sc *StatusChecker) check() {
-	urls := sc.urls()
+	targets := sc.targets()
 	type result struct {
 		url string
 		err error
 	}
-	ch := make(chan result, len(urls))
-	for _, u := range urls {
-		go func(url string) { ch <- result{url, sc.probe(url)} }(u)
+	ch := make(chan result, len(targets))
+	for _, t := range targets {
+		go func(t probeTarget) { ch <- result{t.Display, sc.probe(t.Check)} }(t)
 	}
 
-	res := make(map[string]string, len(urls))
-	for range urls {
+	res := make(map[string]string, len(targets))
+	for range targets {
 		r := <-ch
 		state := "online"
 		if r.err != nil {

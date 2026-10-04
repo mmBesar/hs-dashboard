@@ -1,7 +1,0 @@
-config.json
-services.json
-docker-compose.yml
-.env
-hs-dashboard
-*.tmp
-.DS_Store

@@ -1,3 +1,3 @@
-module github.com/mmBesar/hs-dashboard
+module github.com/mmbesar/hs-dashboard
 
-go 1.24
+go 1.22

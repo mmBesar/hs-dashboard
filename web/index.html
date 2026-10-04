@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home server</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23c6a0f6'/%3E%3Cpath d='M6 20l5-6 4 4 5-8 6 7' fill='none' stroke='%2324273a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    // Picks the saved (or system) theme before the first paint, so there is no flash.
+    (function () {
+      var t; try { t = localStorage.getItem('theme'); } catch (e) {}
+      if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+
+    <header class="top">
+      <div class="id">
+        <h1 id="host">&nbsp;</h1>
+        <p class="meta" id="meta"></p>
+      </div>
+      <div class="tools">
+        <span class="live" id="live"><i></i><span id="liveText">connecting</span></span>
+        <button class="icon-btn" id="theme" type="button" aria-label="Switch between dark and light theme">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="panel hero" aria-label="Live processor and memory use">
+      <div class="legend">
+        <span class="key cpu">Processor <b class="num" id="cpuNow">–</b></span>
+        <span class="key mem">Memory <b class="num" id="memNow">–</b></span>
+        <span class="span">last 5 minutes</span>
+      </div>
+      <canvas id="graph" role="img" aria-label="Processor and memory use over the last five minutes"></canvas>
+      <div class="cores" id="cores" aria-label="Use per processor core"></div>
+    </section>
+
+    <section class="panel strip" aria-label="System details">
+      <div class="stat">
+        <span class="label">Memory</span>
+        <b class="value num" id="memUsed">–</b>
+        <span class="sub" id="memSub"></span>
+        <div class="seg" aria-hidden="true"><i id="segUsed"></i><i id="segCache"></i></div>
+      </div>
+      <div class="stat">
+        <span class="label">Load average</span>
+        <b class="value num" id="load1">–</b>
+        <span class="sub num" id="loadSub"></span>
+      </div>
+      <div class="stat">
+        <span class="label">Temperature</span>
+        <b class="value num" id="temp">–</b>
+        <span class="sub" id="tempSub"></span>
+      </div>
+      <div class="stat">
+        <span class="label">Network</span>
+        <b class="value num"><span class="down" id="rx">–</span></b>
+        <span class="sub num"><span class="up" id="tx">–</span></span>
+        <canvas id="netGraph" class="spark" aria-hidden="true"></canvas>
+      </div>
+    </section>
+
+    <section aria-labelledby="storageTitle">
+      <div class="sec-head"><h2 id="storageTitle">Storage</h2></div>
+      <div class="panel disks" id="disks"></div>
+    </section>
+
+    <section aria-labelledby="servicesTitle">
+      <div class="sec-head">
+        <h2 id="servicesTitle">Services</h2>
+        <span class="summary" id="summary"></span>
+        <label class="filter">
+          <span class="sr">Filter services</span>
+          <input id="filter" type="search" placeholder="Filter services" autocomplete="off" spellcheck="false">
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+      </div>
+      <div id="services"></div>
+    </section>
+
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

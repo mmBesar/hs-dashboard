@@ -1,0 +1,36 @@
+# hs-dashboard — compose snippet.
+# Paste the service into your main compose file, or run it on its own: docker compose up -d
+services:
+  hs-dashboard:
+    image: ghcr.io/mmbesar/hs-dashboard:latest
+    container_name: hs-dashboard
+    restart: unless-stopped
+
+    # Host networking so the network graph shows the REAL network cards,
+    # and service checks can reach other containers on this machine.
+    # The dashboard then listens on PORT (default 8080) on the host.
+    network_mode: host
+
+    environment:
+      - PUID=1000          # run as this user (the binary drops root after start)
+      - PGID=1000
+      - TZ=Africa/Cairo    # your timezone
+      - PORT=8080          # change if 8080 is taken
+
+    volumes:
+      # What the dashboard reads (all read-only):
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave          # lets it see every disk/subvolume
+      - /etc/hostname:/host/hostname:ro # big heading text
+      - /etc/os-release:/host/os-release:ro
+      # Your editable config (config.jsonc lives in this folder):
+      - /srv/docker/cont/hs-dashboard:/config
+
+    # Locked down: read-only filesystem, no extra privileges.
+    # SETUID/SETGID are only needed so PUID/PGID can take effect.
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt:
+      - no-new-privileges:true

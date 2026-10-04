@@ -1,0 +1,28 @@
+// hs-dashboard config — edit and save, the dashboard reloads it every ~20 seconds.
+// No restart needed. Lines starting with // are comments.
+{
+  // Big heading. Leave empty to use the host's real hostname.
+  "title": "",
+
+  // Services shown as tiles, grouped by "group".
+  //   name  : tile title
+  //   url   : where the tile links to
+  //   group : section the tile lives in
+  //   desc  : optional small text under the name (defaults to the host:port)
+  //   icon  : optional emoji, otherwise the first letters of the name are used
+  //   check : optional address to test instead of url.
+  //           http(s)://...  = up if it answers with anything below 500
+  //           tcp://host:port = up if the port accepts connections
+  //           "none"          = never checked (grey dot)
+  //
+  // These are example entries (default ports) — change them to match your setup.
+  "services": [
+    { "name": "Jellyfin",    "url": "http://hs.mm:8096", "group": "Media",    "desc": "Movies and shows" },
+    { "name": "Immich",      "url": "http://hs.mm:2283", "group": "Media",    "desc": "Photos" },
+    { "name": "TVHeadend",   "url": "http://hs.mm:9981", "group": "Media",    "desc": "Live TV" },
+    { "name": "Gitea",       "url": "http://hs.mm:3000", "group": "Tools",    "desc": "Git hosting" },
+    { "name": "n8n",         "url": "http://hs.mm:5678", "group": "Tools",    "desc": "Automations" },
+    { "name": "Paperless",   "url": "http://hs.mm:8000", "group": "Tools",    "desc": "Documents" },
+    { "name": "Vaultwarden", "url": "https://vault.hs.mm", "group": "Security", "desc": "Passwords" }
+  ]
+}

@@ -24,8 +24,9 @@ services:
       - /:/host/root:ro,rslave          # lets it see every disk/subvolume
       - /etc/hostname:/host/hostname:ro # big heading text
       - /etc/os-release:/host/os-release:ro
-      # Your editable config (config.jsonc lives in this folder):
-      - /srv/docker/cont/hs-dashboard:/config
+      # Your editable folder: config.jsonc, plus an optional logos/ folder with
+      # png/svg files (jellyfin.svg, immich.png ...). Mounted read-write is not needed.
+      - /srv/docker/cont/hs-dashboard:/config:ro
 
     # Locked down: read-only filesystem, no extra privileges.
     # SETUID/SETGID are only needed so PUID/PGID can take effect.

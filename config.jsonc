@@ -1,28 +1,54 @@
 // hs-dashboard config — edit and save, the dashboard reloads it every ~20 seconds.
-// No restart needed. Lines starting with // are comments.
+// No restart needed. Lines starting with // are comments, and a trailing comma is fine.
+// If you make a typo, a red banner shows the line number and the last working version stays on screen.
 {
-  // Big heading. Leave empty to use the host's real hostname.
+  // Big heading. Leave empty to use the machine's real hostname.
   "title": "",
 
-  // Services shown as tiles, grouped by "group".
-  //   name  : tile title
-  //   url   : where the tile links to
-  //   group : section the tile lives in
-  //   desc  : optional small text under the name (defaults to the host:port)
-  //   icon  : optional emoji, otherwise the first letters of the name are used
+  // Colours of the heading and graphs. Pick any of:
+  // mauve, blue, sapphire, teal, green, yellow, peach, red, pink
+  "accent": "mauve",
+  "accent2": "sapphire",
+
+  // Clock and date. All three are optional.
+  //   locale   : "en-GB", "en-US", "ar-EG" ...  (empty = your browser's language)
+  //   timezone : "Africa/Cairo" ...             (empty = your browser's timezone)
+  //   hour12   : true = 12-hour clock, false = 24-hour clock (remove the line = locale default)
+  "locale": "",
+  "timezone": "",
+  "hour12": false,
+
+  // true = open services in a new tab
+  "newTab": false,
+
+  // Services, shown in boxes grouped by "group". The page shrinks or grows the rows
+  // so that everything fits on one screen.
+  //   name  : title
+  //   url   : where the row links to
+  //   group : which box it lives in
+  //   desc  : optional small text under the name (hidden automatically when space is tight)
+  //   icon  : optional. A logo file name ("jellyfin.svg"), or an emoji ("🎬").
+  //           Not needed if a logo file is named after the service — see logos below.
   //   check : optional address to test instead of url.
-  //           http(s)://...  = up if it answers with anything below 500
+  //           http(s)://...   = up if it answers with anything below 500
   //           tcp://host:port = up if the port accepts connections
   //           "none"          = never checked (grey dot)
   //
+  // LOGOS: put png / svg / webp / jpg files in the "logos" folder next to this file
+  // (/srv/docker/cont/hs-dashboard/logos). A file is used automatically when its name matches
+  // the service name, ignoring capitals, spaces and dashes:
+  //   Jellyfin       -> jellyfin.svg
+  //   Paperless-ngx  -> paperless-ngx.png  (or paperlessngx.png, Paperless_ngx.png ...)
+  // If both svg and png exist, svg wins. No logo? You get coloured initials instead.
+  //
   // These are example entries (default ports) — change them to match your setup.
   "services": [
-    { "name": "Jellyfin",    "url": "http://hs.mm:8096", "group": "Media",    "desc": "Movies and shows" },
-    { "name": "Immich",      "url": "http://hs.mm:2283", "group": "Media",    "desc": "Photos" },
-    { "name": "TVHeadend",   "url": "http://hs.mm:9981", "group": "Media",    "desc": "Live TV" },
-    { "name": "Gitea",       "url": "http://hs.mm:3000", "group": "Tools",    "desc": "Git hosting" },
-    { "name": "n8n",         "url": "http://hs.mm:5678", "group": "Tools",    "desc": "Automations" },
-    { "name": "Paperless",   "url": "http://hs.mm:8000", "group": "Tools",    "desc": "Documents" },
-    { "name": "Vaultwarden", "url": "https://vault.hs.mm", "group": "Security", "desc": "Passwords" }
+    { "name": "Jellyfin",    "url": "http://hs.mm:8096",   "group": "Media",    "desc": "Movies and shows" },
+    { "name": "Immich",      "url": "http://hs.mm:2283",   "group": "Media",    "desc": "Photos" },
+    { "name": "TVHeadend",   "url": "http://hs.mm:9981",   "group": "Media",    "desc": "Live TV" },
+    { "name": "Gitea",       "url": "http://hs.mm:3000",   "group": "Tools",    "desc": "Git hosting" },
+    { "name": "n8n",         "url": "http://hs.mm:5678",   "group": "Tools",    "desc": "Automations" },
+    { "name": "Paperless",   "url": "http://hs.mm:8000",   "group": "Tools",    "desc": "Documents" },
+    { "name": "Vaultwarden", "url": "https://vault.hs.mm", "group": "Security", "desc": "Passwords" },
   ]
 }

@@ -20,6 +20,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -100,7 +101,9 @@ func main() {
 	sampler := newSampler()
 	go sampler.run()
 
-	store := newStore(env("CONFIG", "/config/config.jsonc"))
+	cfgPath := env("CONFIG", "/config/config.jsonc")
+	// Optional logos live next to the config: /config/logos/jellyfin.svg, immich.png ...
+	store := newStore(cfgPath, env("LOGOS", filepath.Join(filepath.Dir(cfgPath), "logos")))
 	go store.run()
 
 	mux := http.NewServeMux()
@@ -109,6 +112,7 @@ func main() {
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, sampler.History()) })
 	mux.HandleFunc("GET /api/stream", sampler.stream)
 	mux.HandleFunc("GET /api/services", store.handle)
+	mux.HandleFunc("GET /logos/{name}", store.serveLogo)
 
 	site, err := fs.Sub(webFS, "web")
 	if err != nil {

@@ -17,75 +17,98 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="wrap">
+  <div class="app">
 
-    <header class="top">
-      <div class="id">
-        <h1 id="host">&nbsp;</h1>
-        <p class="meta" id="meta"></p>
+    <div id="banner" class="banner" role="alert" hidden></div>
+
+    <!-- Row 1: name, tools, clock -->
+    <header class="bar">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" style="stop-color: var(--accent)"/><stop offset="1" style="stop-color: var(--accent-2)"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="9" fill="url(#mk)"/>
+          <path d="M6 20l5-6 4 4 5-8 6 7" fill="none" stroke="var(--crust)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <h1 id="host">&nbsp;</h1>
+          <div class="meta" id="meta"></div>
+        </div>
       </div>
+
       <div class="tools">
-        <span class="live" id="live"><i></i><span id="liveText">connecting</span></span>
-        <button class="icon-btn" id="theme" type="button" aria-label="Switch between dark and light theme">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
-        </button>
-      </div>
-    </header>
-
-    <section class="panel hero" aria-label="Live processor and memory use">
-      <div class="legend">
-        <span class="key cpu">Processor <b class="num" id="cpuNow">–</b></span>
-        <span class="key mem">Memory <b class="num" id="memNow">–</b></span>
-        <span class="span">last 5 minutes</span>
-      </div>
-      <canvas id="graph" role="img" aria-label="Processor and memory use over the last five minutes"></canvas>
-      <div class="cores" id="cores" aria-label="Use per processor core"></div>
-    </section>
-
-    <section class="panel strip" aria-label="System details">
-      <div class="stat">
-        <span class="label">Memory</span>
-        <b class="value num" id="memUsed">–</b>
-        <span class="sub" id="memSub"></span>
-        <div class="seg" aria-hidden="true"><i id="segUsed"></i><i id="segCache"></i></div>
-      </div>
-      <div class="stat">
-        <span class="label">Load average</span>
-        <b class="value num" id="load1">–</b>
-        <span class="sub num" id="loadSub"></span>
-      </div>
-      <div class="stat">
-        <span class="label">Temperature</span>
-        <b class="value num" id="temp">–</b>
-        <span class="sub" id="tempSub"></span>
-      </div>
-      <div class="stat">
-        <span class="label">Network</span>
-        <b class="value num"><span class="down" id="rx">–</span></b>
-        <span class="sub num"><span class="up" id="tx">–</span></span>
-        <canvas id="netGraph" class="spark" aria-hidden="true"></canvas>
-      </div>
-    </section>
-
-    <section aria-labelledby="storageTitle">
-      <div class="sec-head"><h2 id="storageTitle">Storage</h2></div>
-      <div class="panel disks" id="disks"></div>
-    </section>
-
-    <section aria-labelledby="servicesTitle">
-      <div class="sec-head">
-        <h2 id="servicesTitle">Services</h2>
-        <span class="summary" id="summary"></span>
         <label class="filter">
           <span class="sr">Filter services</span>
           <input id="filter" type="search" placeholder="Filter services" autocomplete="off" spellcheck="false">
           <kbd aria-hidden="true">/</kbd>
         </label>
+        <button class="chip" id="summary" type="button" aria-pressed="false" hidden></button>
+        <span class="live" id="live" title="Live connection to the server"><i></i><span id="liveText">connecting</span></span>
+        <button class="icon-btn" id="theme" type="button" aria-label="Switch between dark and light theme" title="Theme">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="full" type="button" aria-label="Toggle full screen" title="Full screen (f)">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
       </div>
-      <div id="services"></div>
+
+      <div class="clock">
+        <time class="time num"><span id="hm">--:--</span><span class="sec" id="sec"></span><span class="ap" id="ap"></span></time>
+        <div class="date" id="date">&nbsp;</div>
+      </div>
+    </header>
+
+    <!-- Row 2: system monitor, one row -->
+    <section class="monitor" aria-label="System monitor">
+      <div class="cell cpu">
+        <canvas class="bg" id="cpuBg" aria-hidden="true"></canvas>
+        <div class="split">
+          <div>
+            <span class="label">Processor</span>
+            <b class="value num" id="cpuVal">–</b>
+            <span class="sub" id="cpuSub"></span>
+          </div>
+          <div class="cores" id="cores" aria-label="Use per processor core"></div>
+        </div>
+      </div>
+
+      <div class="cell mem">
+        <canvas class="bg" id="memBg" aria-hidden="true"></canvas>
+        <div class="lr"><span class="label">Memory</span><span class="sub num" id="swap"></span></div>
+        <b class="value num"><span id="memVal">–</span> <small id="memOf"></small></b>
+        <div class="seg" aria-hidden="true"><i id="segUsed"></i><i id="segCache"></i></div>
+      </div>
+
+      <div class="cell">
+        <span class="label">Load</span>
+        <b class="value num" id="load1">–</b>
+        <span class="sub num" id="loadSub"></span>
+      </div>
+
+      <div class="cell">
+        <span class="label">Temperature</span>
+        <b class="value num" id="temp">–</b>
+        <span class="sub" id="tempSub"></span>
+      </div>
+
+      <div class="cell net">
+        <canvas class="bg" id="netBg" aria-hidden="true"></canvas>
+        <span class="label">Network</span>
+        <b class="value num small down" id="rx">–</b>
+        <b class="value num small up" id="tx">–</b>
+      </div>
+
+      <div class="cell storage">
+        <span class="label">Storage</span>
+        <div class="disks" id="disks"></div>
+      </div>
     </section>
 
-  </main>
+    <!-- Row 3: services, fills the rest of the screen -->
+    <main class="services" id="services" aria-label="Services"></main>
+
+  </div>
   <script src="app.js" defer></script>
 </body>
 </html>

@@ -5,6 +5,16 @@
   // Big heading. Leave empty to use the machine's real hostname.
   "title": "",
 
+  // Your own images (all optional). Put the files in the "logos" folder next to this file.
+  // Any of png, svg, webp, avif, jpg, gif, ico works.
+  //   logo    : the picture next to the heading, e.g. "myserver.png"
+  //   favicon : the browser tab icon, e.g. "favicon.png"
+  // You can leave both empty and just name your files logo.svg / favicon.png:
+  // they are picked up automatically. With no favicon, the logo is used for the tab too.
+  // A full address (https://...) also works. Nothing set = the built-in icon.
+  "logo": "",
+  "favicon": "",
+
   // Colours of the heading and graphs. Pick any of:
   // mauve, blue, sapphire, teal, green, yellow, peach, red, pink
   "accent": "mauve",
@@ -24,31 +34,32 @@
   // Services, shown in boxes grouped by "group". The page shrinks or grows the rows
   // so that everything fits on one screen.
   //   name  : title
-  //   url   : where the row links to
+  //   url   : where the row links to (a domain name behind your reverse proxy is perfect)
   //   group : which box it lives in
-  //   desc  : optional small text under the name (hidden automatically when space is tight)
-  //   icon  : optional. A logo file name ("jellyfin.svg"), or an emoji ("🎬").
-  //           Not needed if a logo file is named after the service — see logos below.
+  //   desc  : optional small text under the name. Leave it out and the domain name is shown instead.
+  //           (Hidden automatically when space is tight.)
+  //   icon  : optional. A logo file name ("jellyfin.svg"), a name without extension ("jellyfin"),
+  //           an emoji ("🎬") or a full image address. Not needed if a logo file is named
+  //           after the service — see below.
   //   check : optional address to test instead of url.
   //           http(s)://...   = up if it answers with anything below 500
   //           tcp://host:port = up if the port accepts connections
   //           "none"          = never checked (grey dot)
   //
-  // LOGOS: put png / svg / webp / jpg files in the "logos" folder next to this file
-  // (/srv/docker/cont/hs-dashboard/logos). A file is used automatically when its name matches
+  // LOGOS: a file in the "logos" folder is used automatically when its name matches
   // the service name, ignoring capitals, spaces and dashes:
   //   Jellyfin       -> jellyfin.svg
-  //   Paperless-ngx  -> paperless-ngx.png  (or paperlessngx.png, Paperless_ngx.png ...)
+  //   Paperless-ngx  -> paperless-ngx.png  (or paperlessngx.png, Paperless_ngx.webp ...)
   // If both svg and png exist, svg wins. No logo? You get coloured initials instead.
   //
-  // These are example entries (default ports) — change them to match your setup.
+  // These are example entries — change them to match your setup.
   "services": [
-    { "name": "Jellyfin",    "url": "http://hs.mm:8096",   "group": "Media",    "desc": "Movies and shows" },
-    { "name": "Immich",      "url": "http://hs.mm:2283",   "group": "Media",    "desc": "Photos" },
-    { "name": "TVHeadend",   "url": "http://hs.mm:9981",   "group": "Media",    "desc": "Live TV" },
-    { "name": "Gitea",       "url": "http://hs.mm:3000",   "group": "Tools",    "desc": "Git hosting" },
-    { "name": "n8n",         "url": "http://hs.mm:5678",   "group": "Tools",    "desc": "Automations" },
-    { "name": "Paperless",   "url": "http://hs.mm:8000",   "group": "Tools",    "desc": "Documents" },
-    { "name": "Vaultwarden", "url": "https://vault.hs.mm", "group": "Security", "desc": "Passwords" },
+    { "name": "Jellyfin",    "url": "https://jellyfin.hs.lan",   "group": "Media" },
+    { "name": "Immich",      "url": "https://immich.hs.lan",     "group": "Media",    "desc": "Photos" },
+    { "name": "TVHeadend",   "url": "https://tvh.hs.lan",        "group": "Media" },
+    { "name": "Gitea",       "url": "https://git.hs.lan",        "group": "Tools" },
+    { "name": "n8n",         "url": "https://n8n.hs.lan",        "group": "Tools" },
+    { "name": "Paperless",   "url": "https://paperless.hs.lan",  "group": "Tools" },
+    { "name": "Vaultwarden", "url": "https://vault.hs.lan",      "group": "Security" },
   ]
 }

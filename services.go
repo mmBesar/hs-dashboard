@@ -21,6 +21,8 @@ import (
 
 type Config struct {
 	Title    string    `json:"title"`    // big heading; empty = real hostname
+	Logo     string    `json:"logo"`     // server logo next to the heading (file in logos/); empty = logo.* or built-in
+	Favicon  string    `json:"favicon"`  // browser tab icon (file in logos/); empty = favicon.*, else the logo, else built-in
 	Accent   string    `json:"accent"`   // Catppuccin colour name, e.g. "mauve"
 	Accent2  string    `json:"accent2"`  // second colour of the heading gradient
 	Locale   string    `json:"locale"`   // e.g. "en-GB", "ar-EG"; empty = browser default
@@ -205,10 +207,13 @@ func (s *Store) run() {
 
 		res := make([]Status, len(cfg.Services))
 		var wg sync.WaitGroup
+		slots := make(chan struct{}, 16) // at most 16 checks at once, so 60+ services do not hit the reverse proxy in one burst
 		for i, svc := range cfg.Services {
 			wg.Add(1)
 			go func(i int, svc Service) {
 				defer wg.Done()
+				slots <- struct{}{}
+				defer func() { <-slots }()
 				res[i] = probe(svc)
 			}(i, svc)
 		}
@@ -240,6 +245,9 @@ func logoURL(l logoFile) string {
 // Callers must hold s.mu.
 func (s *Store) pickIcon(svc Service) (logo, text string) {
 	icon := strings.TrimSpace(svc.Icon)
+	if isImageURL(icon) {
+		return icon, ""
+	}
 	if icon == "" {
 		if n := norm(svc.Name); n != "" {
 			if l, ok := s.byNorm[n]; ok {
@@ -259,11 +267,54 @@ func (s *Store) pickIcon(svc Service) (logo, text string) {
 	return "", icon
 }
 
+func isImageURL(v string) bool {
+	return strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://")
+}
+
+// resolveImage turns a config value into an image URL.
+//
+//	value "mylogo.png" -> that file in logos/
+//	value "mylogo"     -> any file called mylogo.* in logos/
+//	value "https://..." -> used as is
+//	empty value        -> the first file in logos/ named like one of autoNames (e.g. "logo")
+//
+// Callers must hold s.mu.
+func (s *Store) resolveImage(value string, autoNames ...string) string {
+	value = strings.TrimSpace(value)
+	if isImageURL(value) {
+		return value
+	}
+	if value != "" {
+		if l, ok := s.byFile[strings.ToLower(value)]; ok {
+			return logoURL(l)
+		}
+		if n := norm(strings.TrimSuffix(value, filepath.Ext(value))); n != "" {
+			if l, ok := s.byNorm[n]; ok {
+				return logoURL(l)
+			}
+		}
+		return ""
+	}
+	for _, name := range autoNames {
+		if l, ok := s.byNorm[norm(name)]; ok {
+			return logoURL(l)
+		}
+	}
+	return ""
+}
+
 func (s *Store) handle(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	brand := s.resolveImage(s.cfg.Logo, "logo")
+	favicon := s.resolveImage(s.cfg.Favicon, "favicon")
+	if favicon == "" {
+		favicon = brand // no favicon of its own: reuse the server logo
+	}
 	out := struct {
 		Title    string        `json:"title"`
+		Logo     string        `json:"logo"`
+		Favicon  string        `json:"favicon"`
 		Accent   string        `json:"accent"`
 		Accent2  string        `json:"accent2"`
 		Locale   string        `json:"locale"`
@@ -272,7 +323,7 @@ func (s *Store) handle(w http.ResponseWriter, r *http.Request) {
 		NewTab   bool          `json:"newTab"`
 		Error    string        `json:"error"`
 		Services []ServiceView `json:"services"`
-	}{s.cfg.Title, s.cfg.Accent, s.cfg.Accent2, s.cfg.Locale, s.cfg.Timezone, s.cfg.Hour12, s.cfg.NewTab, s.err, []ServiceView{}}
+	}{s.cfg.Title, brand, favicon, s.cfg.Accent, s.cfg.Accent2, s.cfg.Locale, s.cfg.Timezone, s.cfg.Hour12, s.cfg.NewTab, s.err, []ServiceView{}}
 	for i, sv := range s.cfg.Services {
 		st := Status{State: "unknown"}
 		if i < len(s.status) {

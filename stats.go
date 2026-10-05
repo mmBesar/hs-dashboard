@@ -96,6 +96,7 @@ type Snapshot struct {
 	Mem    Mem        `json:"mem"`
 	Temp   *float64   `json:"temp"` // null when the board has no sensor
 	Net    Net        `json:"net"`
+	GPUs   []GPU      `json:"gpus"`
 	Disks  []Disk     `json:"disks"`
 }
 
@@ -103,6 +104,7 @@ type Snapshot struct {
 type Point struct {
 	T   int64   `json:"t"`
 	CPU float64 `json:"cpu"`
+	GPU float64 `json:"gpu"`
 	Mem float64 `json:"mem"` // percent
 	Rx  float64 `json:"rx"`
 	Tx  float64 `json:"tx"`
@@ -127,10 +129,15 @@ type Sampler struct {
 
 	disks   []Disk
 	disksAt time.Time
+
+	gpuDevs   []gpuDev
+	gpuAt     time.Time
+	gpuStates map[string]*gpuState
 }
 
 func newSampler() *Sampler {
-	return &Sampler{info: loadInfo(), latest: Snapshot{Disks: []Disk{}, CPU: CPU{Cores: []float64{}}}}
+	return &Sampler{info: loadInfo(), gpuStates: map[string]*gpuState{},
+		latest: Snapshot{Disks: []Disk{}, GPUs: []GPU{}, CPU: CPU{Cores: []float64{}}}}
 }
 
 func (s *Sampler) run() {
@@ -188,6 +195,22 @@ func (s *Sampler) sample() {
 		s.disks, s.disksAt = readDisks(), now
 	}
 	snap.Disks = s.disks
+
+	// Graphics chips: look for them once a minute, read their numbers every sample.
+	if s.gpuDevs == nil || now.Sub(s.gpuAt) > time.Minute {
+		s.gpuDevs, s.gpuAt = discoverGPUs(), now
+	}
+	snap.GPUs = []GPU{}
+	for _, d := range s.gpuDevs {
+		st := s.gpuStates[d.key]
+		if st == nil {
+			st = &gpuState{}
+			s.gpuStates[d.key] = st
+		}
+		if g, ok := d.read(st, now); ok {
+			snap.GPUs = append(snap.GPUs, g)
+		}
+	}
 	s.latest = snap
 
 	if warm {
@@ -195,7 +218,11 @@ func (s *Sampler) sample() {
 		if snap.Mem.Total > 0 {
 			memPct = r1(100 * float64(snap.Mem.Used) / float64(snap.Mem.Total))
 		}
-		s.hist = append(s.hist, Point{T: snap.T, CPU: snap.CPU.Total, Mem: memPct, Rx: snap.Net.Rx, Tx: snap.Net.Tx})
+		gpuPct := 0.0
+		if len(snap.GPUs) > 0 && snap.GPUs[0].Usage != nil {
+			gpuPct = *snap.GPUs[0].Usage
+		}
+		s.hist = append(s.hist, Point{T: snap.T, CPU: snap.CPU.Total, GPU: gpuPct, Mem: memPct, Rx: snap.Net.Rx, Tx: snap.Net.Tx})
 		if len(s.hist) > historyLen {
 			s.hist = s.hist[len(s.hist)-historyLen:]
 		}
@@ -326,13 +353,22 @@ func readMem() Mem {
 	}
 }
 
-// readTemp returns the hottest sensor in °C. ARM and RISC-V boards usually
-// expose thermal_zone*, x86 machines expose hwmon — both are checked.
+// readTemp returns the hottest CPU/board sensor in °C. ARM and RISC-V boards usually
+// expose thermal_zone*, x86 machines expose hwmon — both are checked. Sensors that
+// belong to the GPU, SSDs or wifi cards are skipped (the GPU has its own reading).
 func readTemp() *float64 {
 	zones, _ := filepath.Glob(sysDir + "/class/thermal/thermal_zone*/temp")
 	hwmon, _ := filepath.Glob(sysDir + "/class/hwmon/hwmon*/temp*_input")
 	best, found := 0.0, false
 	for _, p := range append(zones, hwmon...) {
+		dir := filepath.Dir(p)
+		name := readStr(dir + "/type") // thermal zones
+		if name == "" {
+			name = readStr(dir + "/name") // hwmon chips
+		}
+		if !cpuSensor(name) {
+			continue
+		}
 		v, err := strconv.ParseFloat(readStr(p), 64)
 		if err != nil {
 			continue
@@ -350,6 +386,16 @@ func readTemp() *float64 {
 	}
 	best = r1(best)
 	return &best
+}
+
+func cpuSensor(name string) bool {
+	n := strings.ToLower(name)
+	for _, skip := range []string{"gpu", "nvme", "amdgpu", "nouveau", "iwlwifi", "drivetemp", "battery"} {
+		if strings.Contains(n, skip) {
+			return false
+		}
+	}
+	return true
 }
 
 // readNet adds up all real network cards (skips loopback and Docker's virtual ones).

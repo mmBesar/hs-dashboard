@@ -24,7 +24,8 @@
     <!-- Row 1: name, tools, clock -->
     <header class="bar">
       <div class="brand">
-        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <img class="mark custom" id="markImg" alt="" hidden>
+        <svg class="mark" id="markSvg" viewBox="0 0 32 32" aria-hidden="true">
           <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" style="stop-color: var(--accent)"/><stop offset="1" style="stop-color: var(--accent-2)"/>
           </linearGradient></defs>
@@ -60,17 +61,24 @@
     </header>
 
     <!-- Row 2: system monitor, one row -->
-    <section class="monitor" aria-label="System monitor">
+    <section class="monitor" id="monitor" aria-label="System monitor">
       <div class="cell cpu">
         <canvas class="bg" id="cpuBg" aria-hidden="true"></canvas>
+        <div class="lr"><span class="label">Processor</span><span class="sub num" id="cpuTemp" title="Hottest CPU or board sensor"></span></div>
         <div class="split">
           <div>
-            <span class="label">Processor</span>
             <b class="value num" id="cpuVal">–</b>
             <span class="sub" id="cpuSub"></span>
           </div>
           <div class="cores" id="cores" aria-label="Use per processor core"></div>
         </div>
+      </div>
+
+      <div class="cell gpu" id="gpuCell" hidden>
+        <canvas class="bg" id="gpuBg" aria-hidden="true"></canvas>
+        <div class="lr"><span class="label" id="gpuLabel">Graphics</span><span class="sub num" id="gpuTemp"></span></div>
+        <b class="value num" id="gpuVal">–</b>
+        <span class="sub" id="gpuSub"></span>
       </div>
 
       <div class="cell mem">
@@ -80,16 +88,10 @@
         <div class="seg" aria-hidden="true"><i id="segUsed"></i><i id="segCache"></i></div>
       </div>
 
-      <div class="cell">
+      <div class="cell load">
         <span class="label">Load</span>
         <b class="value num" id="load1">–</b>
         <span class="sub num" id="loadSub"></span>
-      </div>
-
-      <div class="cell">
-        <span class="label">Temperature</span>
-        <b class="value num" id="temp">–</b>
-        <span class="sub" id="tempSub"></span>
       </div>
 
       <div class="cell net">
@@ -100,7 +102,7 @@
       </div>
 
       <div class="cell storage">
-        <span class="label">Storage</span>
+        <div class="lr"><span class="label">Storage</span><span class="sub num" id="storSum"></span></div>
         <div class="disks" id="disks"></div>
       </div>
     </section>

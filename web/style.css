@@ -19,6 +19,7 @@
 
   /* Sizes of the service list. app.js changes these so everything fits the screen. */
   --row: 36px;  --f: 14px;  --logo: 26px;  --gap: 12px;
+  --mark: clamp(38px, 3.4vw, 54px);   /* size of the server logo */
 
   --font: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Arabic", sans-serif;
 }
@@ -67,7 +68,8 @@ body {
 /* ---------- row 1: header ---------- */
 .bar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; }
 .brand { display: flex; align-items: center; gap: 14px; margin-inline-end: auto; min-width: 0; }
-.mark { flex: none; width: clamp(38px, 3.4vw, 54px); height: auto; }
+.mark { flex: none; width: var(--mark); height: var(--mark); }
+.mark.custom { width: auto; max-width: calc(var(--mark) * 3); object-fit: contain; border-radius: 10px; }
 h1 {
   margin: 0; padding-bottom: 0.08em;
   font-size: clamp(2rem, 3.6vw, 3.4rem); font-weight: 700; letter-spacing: -0.045em; line-height: 1.02;
@@ -122,14 +124,15 @@ h1 {
 
 /* ---------- row 2: system monitor (one row) ---------- */
 .monitor {
-  display: grid; grid-template-columns: 1.3fr 1.3fr 1fr 0.85fr 1.15fr 2.4fr;
-  background: var(--mantle); border: 1px solid var(--surface0); border-radius: 16px; overflow: hidden;
+  display: grid; grid-template-columns: var(--mon-cols, 1.4fr 1.3fr 0.9fr 1.2fr 2.6fr);
+  gap: 1px; background: var(--surface0);          /* the 1px gaps show as divider lines */
+  border: 1px solid var(--surface0); border-radius: 16px; overflow: hidden;
 }
 .cell {
   position: relative; min-width: 0; min-height: 86px;
   padding: 10px 16px; display: flex; flex-direction: column; justify-content: center;
+  background: var(--mantle);
 }
-.cell + .cell { border-inline-start: 1px solid var(--surface0); }
 .cell > *:not(canvas), .split { position: relative; z-index: 1; }
 .cell canvas.bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
 .label { display: block; color: var(--subtext0); font-size: 0.76rem; }
@@ -155,10 +158,11 @@ h1 {
 #segUsed { background: var(--accent-2); }
 #segCache { background: var(--surface2); }
 
-.disks { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 5px 18px; margin-top: 5px; }
-.d { display: grid; grid-template-columns: minmax(0, 6.5rem) 1fr 2.8em; gap: 9px; align-items: center; height: 17px; font-size: 0.78rem; }
+.disks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 5px 20px; margin-top: 5px; }
+.d { display: grid; grid-template-columns: minmax(0, 6rem) 1fr 2.6em 4.6em; gap: 9px; align-items: center; height: 17px; font-size: 0.78rem; }
 .d .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .d .p { text-align: end; color: var(--subtext0); }
+.d .z { text-align: end; color: var(--subtext0); white-space: nowrap; }
 .bar-s { height: 6px; background: var(--surface0); border-radius: 3px; overflow: hidden; }
 .bar-s i { display: block; height: 100%; width: var(--v, 0%); background: var(--green); border-radius: 3px; transition: width 0.6s ease; }
 .bar-s i.warn { background: var(--yellow); }
@@ -220,19 +224,13 @@ h1 {
 
 /* ---------- smaller screens ---------- */
 @media (max-width: 1280px) {
-  .monitor { grid-template-columns: repeat(6, 1fr); }
-  .cell { grid-column: span 2; }
-  .cell.storage { grid-column: 1 / -1; }
-  .cell:nth-child(3n + 1) { border-inline-start: 0; }
-  .cell:nth-child(n + 4) { border-top: 1px solid var(--surface0); }
+  .monitor { grid-template-columns: repeat(3, 1fr); }
+  .cell.storage { grid-column: span 2; }
+  .monitor.has-gpu .cell.storage { grid-column: span 1; }
 }
 @media (max-width: 720px) {
   .monitor { grid-template-columns: 1fr 1fr; }
-  .cell, .cell.storage { grid-column: auto; }
-  .cell.storage { grid-column: 1 / -1; }
-  .cell:nth-child(odd) { border-inline-start: 0; }
-  .cell:nth-child(even) { border-inline-start: 1px solid var(--surface0); }
-  .cell:nth-child(n + 3) { border-top: 1px solid var(--surface0); }
+  .cell.storage, .monitor.has-gpu .cell.net { grid-column: 1 / -1; }
   .bar { gap: 12px; }
   .brand { flex: 1 1 100%; }
   .tools { order: 3; flex: 1 1 100%; flex-wrap: wrap; }

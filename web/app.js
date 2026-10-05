@@ -7,7 +7,7 @@
 const $ = (sel) => document.querySelector(sel);
 const root = document.documentElement;
 const HIST_CAP = 150;                    // must match historyLen in stats.go
-const hist = [];                         // [{cpu, mem, rx, tx}, ...]
+const hist = [];                         // [{cpu, gpu, mem, rx, tx}, ...]
 let lastSnap = null;
 let settings = {};
 let onlyDown = false;
@@ -108,12 +108,41 @@ function draw(canvas, layers, top = 0.3) {
 }
 function drawAll() {
   draw($('#cpuBg'), [{ data: hist.map((p) => p.cpu), color: css('--accent'), fill: true, max: 100 }]);
+  if (!$('#gpuCell').hidden) draw($('#gpuBg'), [{ data: hist.map((p) => p.gpu || 0), color: css('--pink'), fill: true, max: 100 }]);
   draw($('#memBg'), [{ data: hist.map((p) => p.mem), color: css('--accent-2'), fill: true, max: 100 }]);
   const peak = Math.max(1, ...hist.map((p) => Math.max(p.rx, p.tx))) * 1.1;
   draw($('#netBg'), [
     { data: hist.map((p) => p.tx), color: css('--green'), width: 1.4, max: peak },
     { data: hist.map((p) => p.rx), color: css('--blue'), fill: true, max: peak },
   ], 0.15);
+}
+
+// ---------- server logo and favicon (any png / svg / webp / jpg / gif / ico / avif) ----------
+const markImg = $('#markImg'), markSvg = $('#markSvg');
+function setBrand(url) {
+  const custom = !!url;
+  if (custom && markImg.getAttribute('src') !== url) markImg.src = url;
+  markImg.toggleAttribute('hidden', !custom);
+  markSvg.toggleAttribute('hidden', custom);
+}
+markImg.addEventListener('error', () => { markImg.toggleAttribute('hidden', true); markSvg.toggleAttribute('hidden', false); });
+
+const MIME = { svg: 'image/svg+xml', png: 'image/png', webp: 'image/webp', avif: 'image/avif', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', ico: 'image/x-icon' };
+const favLink = document.querySelector('link[rel="icon"]');
+const FAV_DEFAULT = favLink.getAttribute('href');
+function setFavicon(url) {
+  let apple = document.querySelector('link[rel="apple-touch-icon"]');
+  if (!url) {
+    favLink.type = 'image/svg+xml'; favLink.setAttribute('href', FAV_DEFAULT);
+    if (apple) apple.remove();
+    return;
+  }
+  const ext = url.split('?')[0].split('.').pop().toLowerCase();
+  if (favLink.getAttribute('href') !== url) { favLink.type = MIME[ext] || ''; favLink.setAttribute('href', url); }
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {      // iPhones only use raster icons for the home screen
+    if (!apple) { apple = h('link', { rel: 'apple-touch-icon' }); document.head.append(apple); }
+    apple.setAttribute('href', url);
+  } else if (apple) apple.remove();
 }
 
 // ---------- settings from config.jsonc ----------
@@ -125,6 +154,8 @@ function applySettings(d) {
   root.style.setProperty('--accent', `var(--${a})`);
   root.style.setProperty('--accent-2', `var(--${b})`);
   setupClock(d);
+  setBrand(d.logo);
+  setFavicon(d.favicon);
   renderTitle();
 }
 
@@ -149,10 +180,39 @@ function updateTitle() {
 }
 
 // ---------- live numbers ----------
+function tempClass(t) { return t == null ? '' : t >= 80 ? 'temp-hot' : t >= 65 ? 'temp-warm' : ''; }
+
+// The GPU cell only exists when a graphics chip reports something.
+const GPU_COLS = '1.3fr 1.3fr 1.2fr 0.9fr 1.1fr 2.4fr';   // processor, graphics, memory, load, network, storage
+function renderGPU(s) {
+  const cell = $('#gpuCell'), mon = $('#monitor');
+  const gpus = s.gpus || [], g = gpus[0];
+  if (cell.hidden === !!g) {                            // appeared or disappeared: re-do the layout
+    cell.hidden = !g;
+    mon.classList.toggle('has-gpu', !!g);
+    mon.style.setProperty('--mon-cols', g ? GPU_COLS : '');
+    fit();
+  }
+  if (!g) return;
+  $('#gpuLabel').textContent = gpus.length > 1 ? `${g.name} +${gpus.length - 1}` : g.name;
+  const val = $('#gpuVal');
+  val.textContent = g.usage == null ? '–' : g.usage.toFixed(0) + '%';
+  val.title = g.estimated ? 'Estimated from GPU idle time' : '';
+  const bits = [];
+  if (g.freq != null) bits.push(Math.round(g.freq) + ' MHz');
+  if (g.vramTotal) bits.push(`VRAM ${bytes(g.vramUsed)} / ${bytes(g.vramTotal)}`);
+  $('#gpuSub').textContent = bits.length ? bits.join(' · ') : 'No usage data from the driver';
+  const t = $('#gpuTemp');
+  t.textContent = g.temp == null ? '' : g.temp.toFixed(0) + ' °C';
+  t.className = 'sub num ' + tempClass(g.temp);
+  cell.title = gpus.map((x) => `${x.name} (${x.driver})` + (x.usage != null ? ` ${x.usage.toFixed(0)}%` : '')).join('\n');
+}
+
 function update(s) {
   lastSnap = s;
   const memPct = s.mem.total ? (100 * s.mem.used) / s.mem.total : 0;
-  hist.push({ cpu: s.cpu.total, mem: memPct, rx: s.net.rx, tx: s.net.tx });
+  const g = s.gpus && s.gpus[0];
+  hist.push({ cpu: s.cpu.total, gpu: g && g.usage != null ? g.usage : 0, mem: memPct, rx: s.net.rx, tx: s.net.tx });
   if (hist.length > HIST_CAP) hist.shift();
 
   const upt = $('#upt'); if (upt) upt.textContent = 'up ' + uptime(s.uptime);
@@ -179,14 +239,12 @@ function update(s) {
   $('#load1').textContent = s.load[0].toFixed(2);
   $('#loadSub').textContent = `5m ${s.load[1].toFixed(2)} · 15m ${s.load[2].toFixed(2)}`;
 
-  const t = $('#temp');
-  if (s.temp == null) {
-    t.textContent = '–'; t.className = 'value num'; $('#tempSub').textContent = 'No sensor found';
-  } else {
-    t.replaceChildren(s.temp.toFixed(0) + ' °C');
-    t.className = 'value num ' + (s.temp >= 75 ? 'temp-hot' : s.temp >= 60 ? 'temp-warm' : '');
-    $('#tempSub').textContent = 'Hottest sensor';
-  }
+  // CPU temperature (top right of the Processor cell)
+  const ct = $('#cpuTemp');
+  ct.textContent = s.temp == null ? '' : s.temp.toFixed(0) + ' °C';
+  ct.className = 'sub num ' + tempClass(s.temp);
+
+  renderGPU(s);
 
   $('#rx').textContent = '↓ ' + bytes(s.net.rx) + '/s';
   $('#tx').textContent = '↑ ' + bytes(s.net.tx) + '/s';
@@ -198,6 +256,8 @@ function update(s) {
 let diskCount = -1;
 function renderDisks(disks) {
   const box = $('#disks');
+  const total = disks.reduce((n, d) => n + d.total, 0), used = disks.reduce((n, d) => n + d.used, 0);
+  $('#storSum').textContent = total ? `${bytes(total)} total · ${bytes(used)} used (${((100 * used) / total).toFixed(0)}%)` : '';
   if (!disks.length) {
     box.replaceChildren(h('span', { class: 'none' }, 'No disks found. Mount the host root as /:/host/root:ro,rslave'));
   } else {
@@ -206,7 +266,8 @@ function renderDisks(disks) {
       return h('div', { class: 'd', title: `${d.mount}  (${d.device}, ${d.fs})\n${bytes(d.used)} of ${bytes(d.total)} used` },
         h('span', { class: 'n' }, d.mount),
         h('span', { class: 'bar-s' }, h('i', { class: pct >= 90 ? 'full' : pct >= 75 ? 'warn' : '', style: `--v:${pct}%` })),
-        h('span', { class: 'p num' }, pct.toFixed(0) + '%'));
+        h('span', { class: 'p num' }, pct.toFixed(0) + '%'),
+        h('span', { class: 'z num' }, bytes(d.total)));
     }));
   }
   if (disks.length !== diskCount) { diskCount = disks.length; fit(); }   // monitor height may have changed
